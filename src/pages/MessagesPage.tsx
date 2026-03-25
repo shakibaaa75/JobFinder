@@ -1,6 +1,6 @@
 // src/pages/MessagesPage.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom"; // <-- Added Link here
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import api from "../services/api";
@@ -18,9 +18,7 @@ const MessagesPage: React.FC = () => {
   const [sending, setSending] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [typing, setTyping] = useState<boolean>(false);
-  const [typingTimeout, setTypingTimeout] = useState<ReturnType<
-    typeof setTimeout
-  > | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -33,8 +31,11 @@ const MessagesPage: React.FC = () => {
 
   useEffect(() => {
     const friendId = searchParams.get("friend");
-    if (friendId && !currentFriendId) {
-      openChat(parseInt(friendId));
+    if (friendId) {
+      const parsedId = parseInt(friendId);
+      if (!isNaN(parsedId)) {
+        openChat(parsedId);
+      }
     }
   }, [searchParams]);
 
@@ -46,59 +47,67 @@ const MessagesPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // ✅ FIX: Proper error handling
   const loadConversations = async (): Promise<void> => {
     try {
-      const data = await api.get<Conversation[]>(
+      const results = await api.get<Conversation[]>(
         "/api/messages/conversations",
         true,
       );
-      setConversations(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Failed to load conversations:", error);
+      setConversations(Array.isArray(results) ? results : []);
+    } catch (err: any) {
+      console.error("Failed to load conversations:", err);
+      showError(err.response?.data?.error || "Failed to load conversations");
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ FIX: Proper error handling with silent option
   const loadMessages = async (
     friendId: number,
     silent: boolean = false,
   ): Promise<void> => {
     try {
-      const data = await api.get<Message[]>(`/api/messages/${friendId}`, true);
-      if (Array.isArray(data)) {
-        setMessages(data.reverse());
+      const results = await api.get<Message[]>(
+        `/api/messages/${friendId}`,
+        true,
+      );
+      if (Array.isArray(results)) {
+        setMessages(results.reverse());
         if (!silent) {
-          loadConversations(); // Refresh conversation list to update unread counts
+          loadConversations();
         }
       }
-    } catch (error) {
-      if (!silent) showError("Failed to load messages");
+    } catch (err: any) {
+      if (!silent) {
+        showError(err.response?.data?.error || "Failed to load messages");
+      }
     }
   };
 
   const openChat = async (friendId: number): Promise<void> => {
     setCurrentFriendId(friendId);
 
-    // Clear existing poll interval
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
 
     await loadMessages(friendId);
 
-    // Poll for new messages every 2 seconds (faster for better UX)
+    // Poll for new messages every 3 seconds
     pollIntervalRef.current = setInterval(() => {
       loadMessages(friendId, true);
-    }, 2000);
+    }, 3000);
   };
 
+  // ✅ FIX: Proper error handling for sending messages
   const sendMessage = async (): Promise<void> => {
     if (!newMessage.trim() || !currentFriendId) return;
 
     setSending(true);
     try {
-      const data = await api.post(
+      await api.post(
         "/api/messages",
         {
           receiver_id: currentFriendId,
@@ -107,16 +116,13 @@ const MessagesPage: React.FC = () => {
         true,
       );
 
-      if (data && !data.error) {
-        setNewMessage("");
-        await loadMessages(currentFriendId, true);
-        loadConversations();
-        success("Message sent!");
-      } else {
-        showError(data?.error || "Failed to send message");
-      }
-    } catch (error) {
-      showError("Failed to send message");
+      setNewMessage("");
+      await loadMessages(currentFriendId, true);
+      loadConversations();
+      success("Message sent!");
+    } catch (err: any) {
+      console.error("Failed to send message:", err);
+      showError(err.response?.data?.error || "Failed to send message");
     } finally {
       setSending(false);
     }
@@ -125,21 +131,17 @@ const MessagesPage: React.FC = () => {
   const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
 
-    // Typing indicator logic
     if (!typing) {
       setTyping(true);
-      // Could emit typing event via WebSocket here
     }
 
-    if (typingTimeout) {
-      clearTimeout(typingTimeout);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
 
-    setTypingTimeout(
-      setTimeout(() => {
-        setTyping(false);
-      }, 1000),
-    );
+    typingTimeoutRef.current = setTimeout(() => {
+      setTyping(false);
+    }, 1000);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -186,12 +188,12 @@ const MessagesPage: React.FC = () => {
             </h1>
             <p className="text-gray-500">Chat with your friends</p>
           </div>
-          <a
-            href="/friends"
+          <Link
+            to="/friends"
             className="px-4 py-2 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition"
           >
             👥 View Friends
-          </a>
+          </Link>
         </div>
       </div>
 
@@ -267,12 +269,12 @@ const MessagesPage: React.FC = () => {
                 <div className="text-center py-12">
                   <div className="text-4xl mb-3">💬</div>
                   <p className="text-gray-500">No conversations yet</p>
-                  <a
-                    href="/friends"
+                  <Link
+                    to="/friends"
                     className="text-indigo-400 text-sm mt-2 inline-block"
                   >
                     Find Friends →
-                  </a>
+                  </Link>
                 </div>
               )}
             </div>
@@ -284,8 +286,8 @@ const MessagesPage: React.FC = () => {
               <>
                 {/* Chat Header */}
                 <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                  <a
-                    href={`/user/${currentFriendId}`}
+                  <Link
+                    to={`/user/${currentFriendId}`}
                     className="flex items-center gap-3 hover:opacity-80 transition"
                   >
                     <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
@@ -295,7 +297,7 @@ const MessagesPage: React.FC = () => {
                       <div className="font-medium">{currentFriendName}</div>
                       <div className="text-xs text-green-400">● Online</div>
                     </div>
-                  </a>
+                  </Link>
                   <button
                     onClick={() => setCurrentFriendId(null)}
                     className="text-gray-500 hover:text-white transition"

@@ -1,5 +1,5 @@
 // src/pages/FriendsPage.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -30,8 +30,14 @@ const FriendsPage: React.FC = () => {
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
+  // ✅ FIX: Use ref for search timeout to avoid closure trap
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     loadInitialData();
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
   }, []);
 
   const loadInitialData = async (): Promise<void> => {
@@ -44,118 +50,132 @@ const FriendsPage: React.FC = () => {
     setLoading(false);
   };
 
-  const searchUsers = async (): Promise<void> => {
-    if (searchQuery.length < 2) {
+  // ✅ FIX: Accept query as parameter to avoid stale closure
+  const performSearch = async (query: string): Promise<void> => {
+    if (query.length < 2) {
       setSearchResults([]);
       return;
     }
 
     setSearching(true);
     try {
-      const data = await api.get<User[]>(
-        `/api/users/search?q=${encodeURIComponent(searchQuery)}`,
+      console.log("🔍 Searching for:", query);
+      const results = await api.get<User[]>(
+        `/api/users/search?q=${encodeURIComponent(query)}`,
         true,
       );
-      // ✅ Filter out current user from search results
-      const filteredResults = Array.isArray(data)
-        ? data.filter((user) => user.id !== currentUser?.id)
-        : [];
-      setSearchResults(filteredResults);
-    } catch (error) {
-      console.error("Search failed:", error);
+      console.log("🔍 API response:", results);
+
+      // api.ts returns response.data directly (already unwrapped)
+      const users = Array.isArray(results) ? results : [];
+      const filtered = users.filter((user) => user.id !== currentUser?.id);
+      setSearchResults(filtered);
+    } catch (err: any) {
+      console.error("Search failed:", err);
+      showError(err.response?.data?.error || "Search failed");
       setSearchResults([]);
     } finally {
       setSearching(false);
     }
   };
 
+  // ✅ FIX: Handle input change with proper debounce
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // Set new timeout with FRESH value in closure
+    searchTimeoutRef.current = setTimeout(() => {
+      if (value.length >= 2) {
+        performSearch(value);
+      } else {
+        setSearchResults([]);
+      }
+    }, 300);
+  };
+
   const loadFriends = async (): Promise<void> => {
     try {
-      const data = await api.get<Friend[]>("/api/friends", true);
-      setFriends(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Failed to load friends:", error);
+      const results = await api.get<Friend[]>("/api/friends", true);
+      setFriends(Array.isArray(results) ? results : []);
+    } catch (err: any) {
+      console.error("Failed to load friends:", err);
+      showError(err.response?.data?.error || "Failed to load friends");
     }
   };
 
   const loadRequests = async (type: "received" | "sent"): Promise<void> => {
     try {
-      const data = await api.get<FriendRequest[]>(
+      const results = await api.get<FriendRequest[]>(
         `/api/friends/requests?type=${type}`,
         true,
       );
       if (type === "received") {
-        setFriendRequests(Array.isArray(data) ? data : []);
+        setFriendRequests(Array.isArray(results) ? results : []);
       } else {
-        setSentRequests(Array.isArray(data) ? data : []);
+        setSentRequests(Array.isArray(results) ? results : []);
       }
-    } catch (error) {
-      console.error(`Failed to load ${type} requests:`, error);
+    } catch (err: any) {
+      console.error(`Failed to load ${type} requests:`, err);
     }
   };
 
+  // ✅ FIX: Proper error handling for friend requests
   const sendFriendRequest = async (friendId: number): Promise<void> => {
-    // ✅ Prevent sending request to yourself
     if (friendId === currentUser?.id) {
       showError("You cannot send a friend request to yourself");
       return;
     }
 
     try {
-      const data = await api.post(
-        "/api/friends/request",
-        { friend_id: friendId },
-        true,
-      );
-      if (data && !data.error) {
-        success("Friend request sent!");
-        searchUsers(); // Refresh search results
-      } else {
-        showError(data?.error || "Failed to send request");
+      await api.post("/api/friends/request", { friend_id: friendId }, true);
+      success("Friend request sent!");
+      // Refresh search to show updated status
+      if (searchQuery.length >= 2) {
+        performSearch(searchQuery);
       }
-    } catch (error) {
-      showError("Failed to send request");
+    } catch (err: any) {
+      console.error("Failed to send request:", err);
+      showError(err.response?.data?.error || "Failed to send request");
     }
   };
 
+  // ✅ FIX: Proper error handling for responding to requests
   const respondToRequest = async (
     requestId: number,
     action: "accept" | "reject",
   ): Promise<void> => {
     try {
-      const data = await api.put(
-        `/api/friends/requests/${requestId}`,
-        { action },
-        true,
-      );
-      if (data && !data.error) {
-        success(`Friend request ${action}ed!`);
-        loadRequests("received");
-        if (action === "accept") loadFriends();
-      } else {
-        showError(data?.error || `Failed to ${action} request`);
-      }
-    } catch (error) {
-      showError(`Failed to ${action} request`);
+      await api.put(`/api/friends/requests/${requestId}`, { action }, true);
+      success(`Friend request ${action}ed!`);
+      loadRequests("received");
+      if (action === "accept") loadFriends();
+    } catch (err: any) {
+      console.error(`Failed to ${action} request:`, err);
+      showError(err.response?.data?.error || `Failed to ${action} request`);
     }
   };
 
+  // ✅ FIX: Proper error handling for canceling requests
   const cancelRequest = async (requestId: number): Promise<void> => {
     if (!confirm("Cancel this friend request?")) return;
 
     try {
-      const data = await api.delete(`/api/friends/${requestId}`, true);
-      if (data && !data.error) {
-        success("Request cancelled");
-        loadRequests("sent");
-      } else {
-        showError("Failed to cancel request");
-      }
-    } catch (error) {
-      showError("Failed to cancel request");
+      await api.delete(`/api/friends/${requestId}`, true);
+      success("Request cancelled");
+      loadRequests("sent");
+    } catch (err: any) {
+      console.error("Failed to cancel request:", err);
+      showError(err.response?.data?.error || "Failed to cancel request");
     }
   };
 
+  // ✅ FIX: Proper error handling for removing friends
   const removeFriend = async (
     friendshipId: number,
     friendName: string,
@@ -163,15 +183,12 @@ const FriendsPage: React.FC = () => {
     if (!confirm(`Remove ${friendName} from your friends?`)) return;
 
     try {
-      const data = await api.delete(`/api/friends/${friendshipId}`, true);
-      if (data && !data.error) {
-        success("Friend removed");
-        loadFriends();
-      } else {
-        showError("Failed to remove friend");
-      }
-    } catch (error) {
-      showError("Failed to remove friend");
+      await api.delete(`/api/friends/${friendshipId}`, true);
+      success("Friend removed");
+      loadFriends();
+    } catch (err: any) {
+      console.error("Failed to remove friend:", err);
+      showError(err.response?.data?.error || "Failed to remove friend");
     }
   };
 
@@ -279,8 +296,7 @@ const FriendsPage: React.FC = () => {
                     type="text"
                     placeholder="Search by name, email, or headline..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyUp={() => setTimeout(searchUsers, 300)}
+                    onChange={handleSearchChange} // ✅ Use fixed handler
                     className="w-full pl-11 pr-4 py-3 bg-[#111118] border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
