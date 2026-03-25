@@ -1,5 +1,5 @@
 // src/pages/MessagesPage.tsx
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -9,7 +9,7 @@ import type { Conversation, Message } from "../types";
 const MessagesPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
-  const { error: showError } = useToast();
+  const { error: showError, success } = useToast();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentFriendId, setCurrentFriendId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -17,8 +17,13 @@ const MessagesPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [sending, setSending] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [typing, setTyping] = useState<boolean>(false);
+  const [typingTimeout, setTypingTimeout] = useState<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     loadConversations();
     return () => {
@@ -55,22 +60,6 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  const openChat = async (friendId: number): Promise<void> => {
-    setCurrentFriendId(friendId);
-
-    // Clear existing poll interval
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-    }
-
-    await loadMessages(friendId);
-
-    // Poll for new messages every 3 seconds
-    pollIntervalRef.current = setInterval(() => {
-      loadMessages(friendId, true);
-    }, 3000);
-  };
-
   const loadMessages = async (
     friendId: number,
     silent: boolean = false,
@@ -86,6 +75,22 @@ const MessagesPage: React.FC = () => {
     } catch (error) {
       if (!silent) showError("Failed to load messages");
     }
+  };
+
+  const openChat = async (friendId: number): Promise<void> => {
+    setCurrentFriendId(friendId);
+
+    // Clear existing poll interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    await loadMessages(friendId);
+
+    // Poll for new messages every 2 seconds (faster for better UX)
+    pollIntervalRef.current = setInterval(() => {
+      loadMessages(friendId, true);
+    }, 2000);
   };
 
   const sendMessage = async (): Promise<void> => {
@@ -106,6 +111,7 @@ const MessagesPage: React.FC = () => {
         setNewMessage("");
         await loadMessages(currentFriendId, true);
         loadConversations();
+        success("Message sent!");
       } else {
         showError(data?.error || "Failed to send message");
       }
@@ -114,6 +120,26 @@ const MessagesPage: React.FC = () => {
     } finally {
       setSending(false);
     }
+  };
+
+  const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewMessage(e.target.value);
+
+    // Typing indicator logic
+    if (!typing) {
+      setTyping(true);
+      // Could emit typing event via WebSocket here
+    }
+
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+    }
+
+    setTypingTimeout(
+      setTimeout(() => {
+        setTyping(false);
+      }, 1000),
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -230,6 +256,9 @@ const MessagesPage: React.FC = () => {
                         <p className="text-sm text-gray-500 truncate">
                           {conv.last_message}
                         </p>
+                        <p className="text-xs text-gray-600 mt-1">
+                          {timeAgo(conv.last_message_at)}
+                        </p>
                       </div>
                     </div>
                   </button>
@@ -255,7 +284,10 @@ const MessagesPage: React.FC = () => {
               <>
                 {/* Chat Header */}
                 <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  <a
+                    href={`/user/${currentFriendId}`}
+                    className="flex items-center gap-3 hover:opacity-80 transition"
+                  >
                     <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
                       {currentFriendName[0].toUpperCase()}
                     </div>
@@ -263,7 +295,7 @@ const MessagesPage: React.FC = () => {
                       <div className="font-medium">{currentFriendName}</div>
                       <div className="text-xs text-green-400">● Online</div>
                     </div>
-                  </div>
+                  </a>
                   <button
                     onClick={() => setCurrentFriendId(null)}
                     className="text-gray-500 hover:text-white transition"
@@ -303,6 +335,9 @@ const MessagesPage: React.FC = () => {
                               className={`text-xs text-gray-500 mt-1 ${isSent ? "text-right" : "text-left"}`}
                             >
                               {timeAgo(msg.created_at)}
+                              {isSent && msg.is_read && (
+                                <span className="ml-2 text-indigo-400">✓✓</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -317,9 +352,9 @@ const MessagesPage: React.FC = () => {
                   <div className="flex gap-3">
                     <textarea
                       value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
+                      onChange={handleTyping}
                       onKeyDown={handleKeyDown}
-                      placeholder="Type a message..."
+                      placeholder="Type a message... (Enter to send)"
                       rows={1}
                       className="flex-1 px-4 py-2 bg-[#111118] border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
                     />
@@ -328,9 +363,14 @@ const MessagesPage: React.FC = () => {
                       disabled={sending || !newMessage.trim()}
                       className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white font-medium transition disabled:opacity-50"
                     >
-                      Send
+                      {sending ? "Sending..." : "Send"}
                     </button>
                   </div>
+                  {typing && (
+                    <p className="text-xs text-gray-500 mt-2 animate-pulse">
+                      Typing...
+                    </p>
+                  )}
                 </div>
               </>
             ) : (

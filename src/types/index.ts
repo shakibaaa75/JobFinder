@@ -18,6 +18,7 @@ export interface User {
   github?: string;
   website?: string;
   twitter?: string;
+  email_verified?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -36,6 +37,8 @@ export interface Job {
   created_at?: string;
   updated_at?: string;
   user_id?: number;
+  user_name?: string;
+  application_count?: number;
 }
 
 export interface Application {
@@ -44,7 +47,7 @@ export interface Application {
   user_id: number;
   title: string;
   company: string;
-  status: 'pending' | 'reviewed' | 'interview' | 'rejected';
+  status: 'pending' | 'reviewed' | 'accepted' | 'rejected';  // ✅ Fixed status types
   applied_at: string;
   resume_url?: string;
 }
@@ -53,6 +56,7 @@ export interface Conversation {
   friend_id: number;
   friend_name: string;
   last_message: string;
+  last_message_at: string;
   unread_count: number;
 }
 
@@ -62,28 +66,44 @@ export interface Message {
   receiver_id: number;
   message: string;
   created_at: string;
-  read: boolean;
+  is_read: boolean;
+  sender_name?: string;
+  receiver_name?: string;
 }
 
 export interface Friend {
   id: number;
+  user_id: number;
+  friend_id: number;
+  friend_name: string;
+  friend_email: string;
+  friend_role?: string;
+  friend_bio?: string;
+  status: string;
+  created_at: string;
+}
+
+export interface FriendRequest {
+  id: number;
+  user_id: number;
   friend_id: number;
   friend_name: string;
   friend_email: string;
   friend_role?: string;
   friend_bio?: string;
   created_at: string;
+  updated_at?: string;
 }
 
-export interface FriendRequest {
+export interface UserSearchResult {
   id: number;
-  sender_id: number;
-  receiver_id: number;
-  friend_name: string;
-  friend_email: string;
-  friend_role?: string;
-  friend_bio?: string;
-  created_at: string;
+  name: string;
+  email: string;
+  role: string;
+  headline?: string;
+  bio?: string;
+  location?: string;
+  friend_status: 'none' | 'sent' | 'received' | 'accepted' | 'blocked';
 }
 
 // =====================
@@ -115,7 +135,7 @@ export interface RegisterData {
 }
 
 // =====================
-// FORM TYPES (FIXED ❗ NO OPTIONALS)
+// FORM TYPES
 // =====================
 
 export interface JobFormData {

@@ -303,7 +303,11 @@ const FriendsPage: React.FC = () => {
                         className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                       >
                         <div className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-4">
+                          {/* ✅ Link to user profile */}
+                          <Link
+                            to={`/user/${user.id}`}
+                            className="flex items-center gap-4 flex-1"
+                          >
                             <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
                               {user.name[0].toUpperCase()}
                             </div>
@@ -318,7 +322,7 @@ const FriendsPage: React.FC = () => {
                                 </div>
                               )}
                             </div>
-                          </div>
+                          </Link>
                           <div>
                             {status === "none" && (
                               <button
@@ -405,7 +409,11 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
+                        {/* ✅ Link to user profile */}
+                        <Link
+                          to={`/user/${friend.friend_id}`}
+                          className="flex items-center gap-4 flex-1"
+                        >
                           <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
                             {friend.friend_name[0].toUpperCase()}
                           </div>
@@ -419,7 +427,7 @@ const FriendsPage: React.FC = () => {
                                 "User"}
                             </div>
                           </div>
-                        </div>
+                        </Link>
                         <div className="flex gap-2">
                           <Link
                             to={`/messages?friend=${friend.friend_id}`}
@@ -484,7 +492,11 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
+                        {/* ✅ Link to user profile */}
+                        <Link
+                          to={`/user/${req.user_id}`}
+                          className="flex items-center gap-4 flex-1"
+                        >
                           <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
                             {req.friend_name[0].toUpperCase()}
                           </div>
@@ -497,7 +509,7 @@ const FriendsPage: React.FC = () => {
                               Sent {timeAgo(req.created_at)}
                             </div>
                           </div>
-                        </div>
+                        </Link>
                         <div className="flex gap-2">
                           <button
                             onClick={() => respondToRequest(req.id, "accept")}
@@ -554,7 +566,11 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
+                        {/* ✅ Link to user profile */}
+                        <Link
+                          to={`/user/${req.friend_id}`}
+                          className="flex items-center gap-4 flex-1"
+                        >
                           <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
                             {req.friend_name[0].toUpperCase()}
                           </div>
@@ -567,7 +583,7 @@ const FriendsPage: React.FC = () => {
                               Sent {timeAgo(req.created_at)}
                             </div>
                           </div>
-                        </div>
+                        </Link>
                         <button
                           onClick={() => cancelRequest(req.id)}
                           className="px-4 py-2 border border-white/10 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-400/30 transition"

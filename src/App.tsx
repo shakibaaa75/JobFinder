@@ -1,5 +1,4 @@
 // src/App.tsx
-
 import {
   BrowserRouter as Router,
   Routes,
@@ -18,6 +17,7 @@ import JobDetailsPage from "./pages/JobDetailsPage";
 import PostJobPage from "./pages/PostJobPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProfilePage from "./pages/ProfilePage";
+import UserProfilePage from "./pages/UserProfilePage"; // ✅ Add this import
 import MessagesPage from "./pages/MessagesPage";
 import FriendsPage from "./pages/FriendsPage";
 import LoginPage from "./pages/LoginPage";
@@ -63,6 +63,15 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ProfilePage />
+                  </ProtectedRoute>
+                }
+              />
+              {/* ✅ Add user profile route */}
+              <Route
+                path="/user/:id"
+                element={
+                  <ProtectedRoute>
+                    <UserProfilePage />
                   </ProtectedRoute>
                 }
               />
