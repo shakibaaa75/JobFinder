@@ -19,7 +19,7 @@ interface User {
 }
 
 const FriendsPage: React.FC = () => {
-  const { user } = useAuth();
+  const {} = useAuth();
   const { success, error: showError } = useToast();
   const [activeTab, setActiveTab] = useState<TabType>("search");
   const [searchQuery, setSearchQuery] = useState<string>("");
