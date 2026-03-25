@@ -19,7 +19,7 @@ interface User {
 }
 
 const FriendsPage: React.FC = () => {
-  const {} = useAuth();
+  const { user: currentUser } = useAuth();
   const { success, error: showError } = useToast();
   const [activeTab, setActiveTab] = useState<TabType>("search");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -56,7 +56,11 @@ const FriendsPage: React.FC = () => {
         `/api/users/search?q=${encodeURIComponent(searchQuery)}`,
         true,
       );
-      setSearchResults(Array.isArray(data) ? data : []);
+      // ✅ Filter out current user from search results
+      const filteredResults = Array.isArray(data)
+        ? data.filter((user) => user.id !== currentUser?.id)
+        : [];
+      setSearchResults(filteredResults);
     } catch (error) {
       console.error("Search failed:", error);
       setSearchResults([]);
@@ -91,6 +95,12 @@ const FriendsPage: React.FC = () => {
   };
 
   const sendFriendRequest = async (friendId: number): Promise<void> => {
+    // ✅ Prevent sending request to yourself
+    if (friendId === currentUser?.id) {
+      showError("You cannot send a friend request to yourself");
+      return;
+    }
+
     try {
       const data = await api.post(
         "/api/friends/request",
@@ -303,7 +313,6 @@ const FriendsPage: React.FC = () => {
                         className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                       >
                         <div className="flex items-center justify-between gap-4">
-                          {/* ✅ Link to user profile */}
                           <Link
                             to={`/user/${user.id}`}
                             className="flex items-center gap-4 flex-1"
@@ -409,7 +418,6 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        {/* ✅ Link to user profile */}
                         <Link
                           to={`/user/${friend.friend_id}`}
                           className="flex items-center gap-4 flex-1"
@@ -492,7 +500,6 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        {/* ✅ Link to user profile */}
                         <Link
                           to={`/user/${req.user_id}`}
                           className="flex items-center gap-4 flex-1"
@@ -566,7 +573,6 @@ const FriendsPage: React.FC = () => {
                       className="bg-[#16161f] border border-white/10 rounded-xl p-4 hover:border-indigo-500/40 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
-                        {/* ✅ Link to user profile */}
                         <Link
                           to={`/user/${req.friend_id}`}
                           className="flex items-center gap-4 flex-1"

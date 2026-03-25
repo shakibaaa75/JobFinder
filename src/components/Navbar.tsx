@@ -62,7 +62,10 @@ const Navbar: React.FC = () => {
 
           {isAuthenticated ? (
             <div className="flex items-center gap-3">
-              <Link to="/profile" className="flex items-center gap-2">
+              <Link
+                to={`/user/${user?.id}`}
+                className="flex items-center gap-2"
+              >
                 <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white text-sm font-bold">
                   {(user?.name || "U")[0].toUpperCase()}
                 </div>
