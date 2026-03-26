@@ -10,13 +10,16 @@ import type { Conversation, Message } from "../types";
 import { MediaUpload } from "../components/MediaUpload";
 import { MediaMessage } from "../components/MediaMessage";
 
+// Extended message interface with reply support
 interface ExtendedMessage extends Message {
   media_type?: "image" | "video";
   file_path?: string;
   file_name?: string;
   file_size?: number;
   is_replying_to?: number | null;
-  reply_to_message?: Message;
+  reply_to_message?: ExtendedMessage | null; // Use ExtendedMessage, not Message
+  pending?: boolean;
+  tempId?: number;
 }
 
 const MessagesPage: React.FC = () => {
@@ -41,6 +44,11 @@ const MessagesPage: React.FC = () => {
   const isActiveRef = useRef(true);
   const currentFriendRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesRef = useRef<ExtendedMessage[]>([]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const {
     lastMessage,
@@ -48,7 +56,6 @@ const MessagesPage: React.FC = () => {
     isConnected,
   } = useWebSocket(user?.id ?? null, token);
 
-  // Prevent zoom on iOS when focusing input
   useEffect(() => {
     const meta = document.querySelector('meta[name="viewport"]');
     if (meta) {
@@ -59,7 +66,6 @@ const MessagesPage: React.FC = () => {
     }
   }, []);
 
-  // Load conversations
   const loadConversations = useCallback(async () => {
     try {
       const data = await api.get<Conversation[]>(
@@ -75,20 +81,15 @@ const MessagesPage: React.FC = () => {
     }
   }, []);
 
-  // Load messages (text + media)
   const loadMessages = useCallback(
     async (friendId: number) => {
       try {
-        const textMessages = await api.get<ExtendedMessage[]>(
-          `/api/messages/${friendId}`,
-          true,
-        );
-        const mediaMessages = await api.get<ExtendedMessage[]>(
-          `/api/media/messages/${friendId}`,
-          true,
-        );
+        const [textMessages, mediaMessages] = await Promise.all([
+          api.get<ExtendedMessage[]>(`/api/messages/${friendId}`, true),
+          api.get<ExtendedMessage[]>(`/api/media/messages/${friendId}`, true),
+        ]);
 
-        const allMessages = [
+        const serverMessages = [
           ...(textMessages || []),
           ...(mediaMessages || []),
         ].sort(
@@ -96,17 +97,31 @@ const MessagesPage: React.FC = () => {
             new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
         );
 
+        const currentMessages = messagesRef.current;
+        const pendingMessages = currentMessages.filter(
+          (m) => m.pending && m.sender_id === user?.id,
+        );
+
+        const confirmedIds = new Set(serverMessages.map((m) => m.id));
+        const stillPending = pendingMessages.filter(
+          (m) => !confirmedIds.has(m.id) && !confirmedIds.has(m.tempId || m.id),
+        );
+
+        const merged = [...serverMessages, ...stillPending].sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+
         if (!isActiveRef.current) return;
-        setMessages(allMessages);
+        setMessages(merged);
       } catch (err) {
         console.error("Failed to load messages:", err);
         showError("Failed to load messages");
       }
     },
-    [showError],
+    [showError, user?.id],
   );
 
-  // Handle incoming WebSocket messages
   useEffect(() => {
     if (!lastMessage) return;
     const msg = lastMessage as any;
@@ -117,44 +132,46 @@ const MessagesPage: React.FC = () => {
         return;
       }
 
-      const incoming: ExtendedMessage = {
-        id: msg.id,
-        sender_id: msg.sender_id,
-        receiver_id: user!.id,
-        message: msg.message,
-        created_at: msg.created_at || new Date().toISOString(),
-        is_read: false,
-        sender_name: msg.sender_name,
-        is_replying_to: msg.is_replying_to,
-        reply_to_message: msg.reply_to_message,
-      };
+      setMessages((prev) => {
+        const matchingPending = prev.find(
+          (m) =>
+            m.pending &&
+            m.message === msg.message &&
+            m.sender_id === msg.sender_id,
+        );
 
-      setMessages((prev) => [...prev, incoming]);
-      loadConversations();
-    }
+        if (matchingPending) {
+          return prev.map((m) =>
+            m.id === matchingPending.id
+              ? {
+                  ...m,
+                  id: msg.id || msg.message_id,
+                  pending: false,
+                  tempId: undefined,
+                }
+              : m,
+          );
+        }
 
-    if (msg.type === "new_media" || msg.type === "media_message") {
-      if (msg.sender_id !== currentFriendRef.current) {
-        loadConversations();
-        return;
-      }
+        if (prev.find((m) => m.id === (msg.id || msg.message_id))) {
+          return prev;
+        }
 
-      const incoming: ExtendedMessage = {
-        id: msg.message_id || msg.id,
-        sender_id: msg.sender_id,
-        receiver_id: user!.id,
-        message:
-          msg.message || `📷 ${msg.media_type === "image" ? "Photo" : "Video"}`,
-        created_at: msg.created_at || new Date().toISOString(),
-        is_read: false,
-        sender_name: msg.sender_name,
-        media_type: msg.media_type,
-        file_path: `/api/media/${msg.message_id || msg.id}`,
-        file_name: msg.file_name,
-        file_size: msg.file_size,
-      };
+        const incoming: ExtendedMessage = {
+          id: msg.id || msg.message_id || Date.now(),
+          sender_id: msg.sender_id,
+          receiver_id: user!.id,
+          message: msg.message,
+          created_at: msg.created_at || new Date().toISOString(),
+          is_read: false,
+          sender_name: msg.sender_name,
+          is_replying_to: msg.reply_to_id || msg.is_replying_to,
+          reply_to_message: msg.reply_to_message || null,
+          pending: false,
+        };
+        return [...prev, incoming];
+      });
 
-      setMessages((prev) => [...prev, incoming]);
       loadConversations();
     }
 
@@ -195,7 +212,7 @@ const MessagesPage: React.FC = () => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typingUsers]);
+  }, [messages]);
 
   const handleTyping = useCallback(() => {
     if (!isTyping && currentFriendId) {
@@ -207,9 +224,7 @@ const MessagesPage: React.FC = () => {
       });
     }
 
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     typingTimeoutRef.current = setTimeout(() => {
       if (isTyping && currentFriendId) {
@@ -249,50 +264,75 @@ const MessagesPage: React.FC = () => {
 
     setSending(true);
     const text = newMessage.trim();
-    setNewMessage("");
     const replyToId = replyingTo?.id || null;
+    const tempId = Date.now();
+
+    setNewMessage("");
     setReplyingTo(null);
+
+    const optimisticMsg: ExtendedMessage = {
+      id: tempId,
+      tempId: tempId,
+      sender_id: user!.id,
+      receiver_id: currentFriendId,
+      message: text,
+      created_at: new Date().toISOString(),
+      is_read: false,
+      sender_name: user!.name,
+      is_replying_to: replyToId,
+      reply_to_message: replyingTo, // This is now ExtendedMessage | null
+      pending: true,
+    };
+
+    setMessages((prev) => [...prev, optimisticMsg]);
 
     try {
       const data = await api.post(
         "/api/messages",
-        {
-          receiver_id: currentFriendId,
-          message: text,
-          reply_to_id: replyToId,
-        },
+        { receiver_id: currentFriendId, message: text, reply_to_id: replyToId },
         true,
       );
 
-      if (data && !data.error) {
-        const optimistic: ExtendedMessage = {
-          id: data.id ?? Date.now(),
-          sender_id: user!.id,
-          receiver_id: currentFriendId,
-          message: text,
-          created_at: new Date().toISOString(),
-          is_read: false,
-          sender_name: user!.name,
-          is_replying_to: replyToId,
-        };
+      console.log("📤 Server response:", data);
 
-        setMessages((prev) => [...prev, optimistic]);
-        loadConversations();
+      if (data && (data.id || data.ID) && !data.error) {
+        const serverId = data.id || data.ID;
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.tempId === tempId || m.id === tempId
+              ? {
+                  ...m,
+                  id: serverId,
+                  tempId: undefined,
+                  pending: false,
+                  is_read: data.is_read || false,
+                  created_at: data.created_at || m.created_at,
+                  is_replying_to: data.is_replying_to || replyToId,
+                  reply_to_message: m.reply_to_message,
+                }
+              : m,
+          ),
+        );
 
         sendWSMessage({
           type: "new_message",
           receiver_id: currentFriendId,
           message: text,
-          message_id: data.id,
+          message_id: serverId,
           reply_to_id: replyToId,
         });
+
+        loadConversations();
       } else {
-        showError(data?.error || "Failed to send message");
-        setNewMessage(text);
+        throw new Error(data?.error || "Failed to send");
       }
     } catch (err) {
       console.error("Send message error:", err);
       showError("Failed to send message");
+      setMessages((prev) =>
+        prev.filter((m) => m.tempId !== tempId && m.id !== tempId),
+      );
       setNewMessage(text);
     } finally {
       setSending(false);
@@ -314,12 +354,10 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
     handleTyping();
 
-    // Auto-resize
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = "auto";
@@ -349,22 +387,15 @@ const MessagesPage: React.FC = () => {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    if (date.toDateString() === today.toDateString()) {
-      return "Today";
-    } else if (date.toDateString() === yesterday.toDateString()) {
-      return "Yesterday";
-    } else {
-      return date.toLocaleDateString([], { month: "short", day: "numeric" });
-    }
+    if (date.toDateString() === today.toDateString()) return "Today";
+    if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
-  // Group messages by date
   const groupedMessages = messages.reduce(
     (groups, msg) => {
       const date = new Date(msg.created_at).toDateString();
-      if (!groups[date]) {
-        groups[date] = [];
-      }
+      if (!groups[date]) groups[date] = [];
       groups[date].push(msg);
       return groups;
     },
@@ -392,7 +423,7 @@ const MessagesPage: React.FC = () => {
       </div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden md:grid md:grid-cols-3 md:gap-4">
-        {/* SIDEBAR - Conversations List */}
+        {/* SIDEBAR */}
         <div
           className={`${currentFriendId ? "hidden md:flex" : "flex"} flex-col bg-[#1c1c1e] md:bg-transparent min-h-0`}
         >
@@ -402,7 +433,7 @@ const MessagesPage: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full p-2.5 rounded-xl bg-[#2c2c2e] md:bg-[#111118] border-0 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#007aff] text-base md:text-sm"
-              style={{ fontSize: "16px" }} // Prevent iOS zoom
+              style={{ fontSize: "16px" }}
             />
           </div>
 
@@ -422,7 +453,6 @@ const MessagesPage: React.FC = () => {
                       : "hover:bg-white/5"
                   }`}
                 >
-                  {/* Avatar */}
                   <div className="w-12 h-12 md:w-10 md:h-10 rounded-full bg-[#007aff] flex items-center justify-center text-white text-lg md:text-base font-medium flex-shrink-0">
                     {conv.friend_name[0].toUpperCase()}
                   </div>
@@ -433,7 +463,8 @@ const MessagesPage: React.FC = () => {
                         {conv.friend_name}
                       </span>
                       <span className="text-xs text-gray-500 ml-2">
-                        {formatTime(conv.last_message_at)}
+                        {formatTime(conv.last_message_at)}{" "}
+                        {/* FIXED: was last_message_time */}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -459,7 +490,9 @@ const MessagesPage: React.FC = () => {
 
         {/* CHAT PANEL */}
         <div
-          className={`${currentFriendId ? "flex" : "hidden md:flex"} flex-col flex-1 md:col-span-2 bg-black md:bg-[#16161f] md:rounded-2xl md:border md:border-white/10 overflow-hidden`}
+          className={`${
+            currentFriendId ? "flex" : "hidden md:flex"
+          } flex-col flex-1 md:col-span-2 bg-black md:bg-[#16161f] md:rounded-2xl md:border md:border-white/10 overflow-hidden`}
         >
           {currentFriendId ? (
             <>
@@ -479,7 +512,9 @@ const MessagesPage: React.FC = () => {
                     <span className="font-semibold text-white text-base leading-tight">
                       {currentFriendName}
                     </span>
-                    <span className="text-xs text-gray-500">Online</span>
+                    {typingUsers.includes(currentFriendId) && (
+                      <span className="text-xs text-[#007aff]">typing...</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -514,10 +549,12 @@ const MessagesPage: React.FC = () => {
 
                       return (
                         <div key={msg.id} className="mb-1">
-                          {/* Reply Preview (iMessage style) */}
+                          {/* Reply Preview */}
                           {msg.is_replying_to && msg.reply_to_message && (
                             <div
-                              className={`flex ${isSent ? "justify-end" : "justify-start"} mb-1`}
+                              className={`flex ${
+                                isSent ? "justify-end" : "justify-start"
+                              } mb-1`}
                             >
                               <div
                                 className={`max-w-[70%] text-xs text-gray-400 ${
@@ -535,9 +572,11 @@ const MessagesPage: React.FC = () => {
                           )}
 
                           <div
-                            className={`flex ${isSent ? "justify-end" : "justify-start"} items-end gap-2`}
+                            className={`flex ${
+                              isSent ? "justify-end" : "justify-start"
+                            } items-end gap-2`}
                           >
-                            {/* Avatar for received messages */}
+                            {/* Avatar */}
                             {!isSent && showAvatar && (
                               <div className="w-8 h-8 rounded-full bg-[#007aff] flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mb-1">
                                 {msg.sender_name?.[0]?.toUpperCase() ||
@@ -551,7 +590,7 @@ const MessagesPage: React.FC = () => {
                                 isSent ? "mr-0" : "ml-0"
                               }`}
                             >
-                              {/* iMessage Bubble */}
+                              {/* Message Bubble */}
                               {msg.media_type && msg.file_path ? (
                                 <MediaMessage
                                   id={msg.id}
@@ -574,11 +613,15 @@ const MessagesPage: React.FC = () => {
                                     isSent
                                       ? "bg-[#007aff] text-white rounded-br-md"
                                       : "bg-[#2c2c2e] text-white rounded-bl-md"
-                                  }`}
+                                  } ${msg.pending ? "opacity-70" : ""}`}
                                 >
                                   {msg.message}
+                                  {msg.pending && (
+                                    <span className="ml-2 text-[10px] opacity-50">
+                                      Sending...
+                                    </span>
+                                  )}
 
-                                  {/* Time inside bubble for iMessage look */}
                                   <span
                                     className={`text-[10px] ml-2 opacity-60 ${
                                       isSent ? "text-white" : "text-gray-400"
@@ -590,7 +633,7 @@ const MessagesPage: React.FC = () => {
                               )}
 
                               {/* Read Receipt */}
-                              {isSent && (
+                              {isSent && !msg.pending && (
                                 <div className="text-right mt-0.5">
                                   {msg.is_read ? (
                                     <span className="text-[10px] text-[#007aff]">
@@ -604,15 +647,17 @@ const MessagesPage: React.FC = () => {
                                 </div>
                               )}
 
-                              {/* Reply Action (on long press/hover) */}
-                              <button
-                                onClick={() => setReplyingTo(msg)}
-                                className={`absolute -bottom-6 ${isSent ? "right-0" : "left-0"} 
-                                  text-xs text-[#007aff] opacity-0 group-hover:opacity-100 transition
-                                  bg-black/80 px-2 py-1 rounded-full`}
-                              >
-                                Reply
-                              </button>
+                              {/* Reply Button */}
+                              {!isSent && !msg.pending && (
+                                <button
+                                  onClick={() => setReplyingTo(msg)}
+                                  className={`absolute -bottom-6 ${
+                                    isSent ? "right-0" : "left-0"
+                                  } text-xs text-[#007aff] opacity-0 group-hover:opacity-100 transition bg-black/80 px-2 py-1 rounded-full`}
+                                >
+                                  Reply
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -621,7 +666,7 @@ const MessagesPage: React.FC = () => {
                   </div>
                 ))}
 
-                {/* iMessage-style TYPING BUBBLE */}
+                {/* Typing Bubble */}
                 {typingUsers.includes(currentFriendId) && (
                   <div className="flex justify-start items-end gap-2 mb-2 animate-fade-in">
                     <div className="w-8 h-8 rounded-full bg-[#007aff] flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mb-1">
@@ -630,24 +675,15 @@ const MessagesPage: React.FC = () => {
                     <div className="bg-[#2c2c2e] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1 min-w-[60px] h-[36px]">
                       <span
                         className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{
-                          animationDelay: "0ms",
-                          animationDuration: "1.4s",
-                        }}
+                        style={{ animationDelay: "0ms" }}
                       ></span>
                       <span
                         className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{
-                          animationDelay: "0.2s",
-                          animationDuration: "1.4s",
-                        }}
+                        style={{ animationDelay: "0.2s" }}
                       ></span>
                       <span
                         className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{
-                          animationDelay: "0.4s",
-                          animationDuration: "1.4s",
-                        }}
+                        style={{ animationDelay: "0.4s" }}
                       ></span>
                     </div>
                   </div>
@@ -656,7 +692,7 @@ const MessagesPage: React.FC = () => {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Reply Preview Bar */}
+              {/* Reply Preview */}
               {replyingTo && (
                 <div className="bg-[#1c1c1e] border-t border-gray-800 px-4 py-2 flex items-center gap-3">
                   <div className="flex-1 bg-[#2c2c2e] rounded-lg px-3 py-2">
@@ -676,10 +712,9 @@ const MessagesPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Input Area - iMessage Style */}
+              {/* Input Area */}
               <div className="bg-[#1c1c1e] border-t border-gray-800 px-3 py-2 pb-safe">
                 <div className="flex items-end gap-2 max-w-4xl mx-auto">
-                  {/* Media Upload */}
                   <div className="pb-2">
                     <MediaUpload
                       receiverId={currentFriendId}
@@ -688,7 +723,6 @@ const MessagesPage: React.FC = () => {
                     />
                   </div>
 
-                  {/* Text Input */}
                   <div className="flex-1 bg-[#2c2c2e] rounded-full px-4 py-2 flex items-end max-h-[100px]">
                     <textarea
                       ref={textareaRef}
@@ -698,11 +732,10 @@ const MessagesPage: React.FC = () => {
                       rows={1}
                       className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none resize-none text-[16px] leading-5 py-1 max-h-[80px]"
                       placeholder="iMessage"
-                      style={{ fontSize: "16px", minHeight: "20px" }} // Prevent iOS zoom
+                      style={{ fontSize: "16px", minHeight: "20px" }}
                     />
                   </div>
 
-                  {/* Send Button */}
                   <button
                     onClick={sendMessage}
                     disabled={sending || !newMessage.trim()}
