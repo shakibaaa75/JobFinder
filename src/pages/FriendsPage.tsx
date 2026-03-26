@@ -30,7 +30,6 @@ const FriendsPage: React.FC = () => {
   const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // ✅ FIX: Use ref for search timeout to avoid closure trap
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -50,7 +49,6 @@ const FriendsPage: React.FC = () => {
     setLoading(false);
   };
 
-  // ✅ FIX: Accept query as parameter to avoid stale closure
   const performSearch = async (query: string): Promise<void> => {
     if (query.length < 2) {
       setSearchResults([]);
@@ -59,14 +57,13 @@ const FriendsPage: React.FC = () => {
 
     setSearching(true);
     try {
-      console.log("🔍 Searching for:", query);
+      // FIX: The backend search endpoint is under /api/friends/search, not /api/users/search.
+      // Using the wrong path was causing every search to 404.
       const results = await api.get<User[]>(
-        `/api/users/search?q=${encodeURIComponent(query)}`,
+        `/api/friends/search?q=${encodeURIComponent(query)}`,
         true,
       );
-      console.log("🔍 API response:", results);
 
-      // api.ts returns response.data directly (already unwrapped)
       const users = Array.isArray(results) ? results : [];
       const filtered = users.filter((user) => user.id !== currentUser?.id);
       setSearchResults(filtered);
@@ -79,17 +76,12 @@ const FriendsPage: React.FC = () => {
     }
   };
 
-  // ✅ FIX: Handle input change with proper debounce
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchQuery(value);
 
-    // Clear previous timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    // Set new timeout with FRESH value in closure
     searchTimeoutRef.current = setTimeout(() => {
       if (value.length >= 2) {
         performSearch(value);
@@ -125,7 +117,6 @@ const FriendsPage: React.FC = () => {
     }
   };
 
-  // ✅ FIX: Proper error handling for friend requests
   const sendFriendRequest = async (friendId: number): Promise<void> => {
     if (friendId === currentUser?.id) {
       showError("You cannot send a friend request to yourself");
@@ -135,17 +126,13 @@ const FriendsPage: React.FC = () => {
     try {
       await api.post("/api/friends/request", { friend_id: friendId }, true);
       success("Friend request sent!");
-      // Refresh search to show updated status
-      if (searchQuery.length >= 2) {
-        performSearch(searchQuery);
-      }
+      if (searchQuery.length >= 2) performSearch(searchQuery);
     } catch (err: any) {
       console.error("Failed to send request:", err);
       showError(err.response?.data?.error || "Failed to send request");
     }
   };
 
-  // ✅ FIX: Proper error handling for responding to requests
   const respondToRequest = async (
     requestId: number,
     action: "accept" | "reject",
@@ -161,10 +148,8 @@ const FriendsPage: React.FC = () => {
     }
   };
 
-  // ✅ FIX: Proper error handling for canceling requests
   const cancelRequest = async (requestId: number): Promise<void> => {
     if (!confirm("Cancel this friend request?")) return;
-
     try {
       await api.delete(`/api/friends/${requestId}`, true);
       success("Request cancelled");
@@ -175,13 +160,11 @@ const FriendsPage: React.FC = () => {
     }
   };
 
-  // ✅ FIX: Proper error handling for removing friends
   const removeFriend = async (
     friendshipId: number,
     friendName: string,
   ): Promise<void> => {
     if (!confirm(`Remove ${friendName} from your friends?`)) return;
-
     try {
       await api.delete(`/api/friends/${friendshipId}`, true);
       success("Friend removed");
@@ -227,23 +210,20 @@ const FriendsPage: React.FC = () => {
             </h3>
             <div className="space-y-2">
               {[
-                { id: "search", label: "🔍 Search Users", icon: "🔍" },
+                { id: "search", label: "🔍 Search Users" },
                 {
                   id: "friends",
                   label: "👥 My Friends",
-                  icon: "👥",
                   count: friends.length,
                 },
                 {
                   id: "requests",
                   label: "📨 Requests",
-                  icon: "📨",
                   count: friendRequests.length,
                 },
                 {
                   id: "sent",
                   label: "📤 Sent Requests",
-                  icon: "📤",
                   count: sentRequests.length,
                 },
               ].map((tab) => (
@@ -257,7 +237,7 @@ const FriendsPage: React.FC = () => {
                   }`}
                 >
                   <span>{tab.label}</span>
-                  {tab.count && tab.count > 0 && (
+                  {tab.count != null && tab.count > 0 && (
                     <span className="px-2 py-0.5 bg-indigo-600 rounded-full text-xs text-white">
                       {tab.count}
                     </span>
@@ -296,7 +276,7 @@ const FriendsPage: React.FC = () => {
                     type="text"
                     placeholder="Search by name, email, or headline..."
                     value={searchQuery}
-                    onChange={handleSearchChange} // ✅ Use fixed handler
+                    onChange={handleSearchChange}
                     className="w-full pl-11 pr-4 py-3 bg-[#111118] border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
@@ -379,7 +359,7 @@ const FriendsPage: React.FC = () => {
                                   Message
                                 </Link>
                                 <button className="px-4 py-2 border border-white/10 rounded-lg text-gray-500 text-sm cursor-default">
-                                  Friends
+                                  Friends ✓
                                 </button>
                               </div>
                             )}
