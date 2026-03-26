@@ -10,14 +10,13 @@ import type { Conversation, Message } from "../types";
 import { MediaUpload } from "../components/MediaUpload";
 import { MediaMessage } from "../components/MediaMessage";
 
-// Extended message interface with reply support
 interface ExtendedMessage extends Message {
   media_type?: "image" | "video";
   file_path?: string;
   file_name?: string;
   file_size?: number;
   is_replying_to?: number | null;
-  reply_to_message?: ExtendedMessage | null; // Use ExtendedMessage, not Message
+  reply_to_message?: ExtendedMessage | null;
   pending?: boolean;
   tempId?: number;
 }
@@ -45,6 +44,7 @@ const MessagesPage: React.FC = () => {
   const currentFriendRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<ExtendedMessage[]>([]);
+  const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -56,6 +56,16 @@ const MessagesPage: React.FC = () => {
     isConnected,
   } = useWebSocket(user?.id ?? null, token);
 
+  // DEBUG: Log WebSocket status
+  useEffect(() => {
+    console.log("🔌 WebSocket status:", {
+      userId: user?.id,
+      hasToken: !!token,
+      isConnected,
+    });
+  }, [user?.id, token, isConnected]);
+
+  // Prevent zoom on iOS
   useEffect(() => {
     const meta = document.querySelector('meta[name="viewport"]');
     if (meta) {
@@ -122,9 +132,12 @@ const MessagesPage: React.FC = () => {
     [showError, user?.id],
   );
 
+  // Handle WebSocket messages
   useEffect(() => {
     if (!lastMessage) return;
     const msg = lastMessage as any;
+
+    console.log("📨 WebSocket received in MessagesPage:", msg);
 
     if (msg.type === "new_message") {
       if (msg.sender_id !== currentFriendRef.current) {
@@ -176,9 +189,25 @@ const MessagesPage: React.FC = () => {
     }
 
     if (msg.type === "typing") {
+      console.log(
+        "⌨️ Typing received from:",
+        msg.sender_id,
+        "Current friend:",
+        currentFriendRef.current,
+      );
+
       if (msg.sender_id !== currentFriendRef.current) return;
-      setTypingUsers((prev) => [...new Set([...prev, msg.sender_id])]);
-      setTimeout(() => {
+
+      if (typingClearRef.current) {
+        clearTimeout(typingClearRef.current);
+      }
+
+      setTypingUsers((prev) => {
+        const filtered = prev.filter((id) => id !== msg.sender_id);
+        return [...filtered, msg.sender_id];
+      });
+
+      typingClearRef.current = setTimeout(() => {
         setTypingUsers((prev) => prev.filter((id) => id !== msg.sender_id));
       }, 3000);
     }
@@ -212,9 +241,21 @@ const MessagesPage: React.FC = () => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, typingUsers]);
 
   const handleTyping = useCallback(() => {
+    console.log(
+      "⌨️ handleTyping called, isConnected:",
+      isConnected,
+      "currentFriendId:",
+      currentFriendId,
+    );
+
+    if (!isConnected) {
+      console.warn("Cannot send typing - WebSocket not connected");
+      return;
+    }
+
     if (!isTyping && currentFriendId) {
       setIsTyping(true);
       sendWSMessage({
@@ -236,7 +277,7 @@ const MessagesPage: React.FC = () => {
         });
       }
     }, 1000);
-  }, [isTyping, currentFriendId, sendWSMessage]);
+  }, [isTyping, currentFriendId, sendWSMessage, isConnected]);
 
   const openChat = useCallback(
     async (friendId: number) => {
@@ -246,6 +287,7 @@ const MessagesPage: React.FC = () => {
       currentFriendRef.current = friendId;
       setMessages([]);
       setReplyingTo(null);
+      setTypingUsers([]);
 
       await loadMessages(friendId);
 
@@ -280,7 +322,7 @@ const MessagesPage: React.FC = () => {
       is_read: false,
       sender_name: user!.name,
       is_replying_to: replyToId,
-      reply_to_message: replyingTo, // This is now ExtendedMessage | null
+      reply_to_message: replyingTo,
       pending: true,
     };
 
@@ -292,8 +334,6 @@ const MessagesPage: React.FC = () => {
         { receiver_id: currentFriendId, message: text, reply_to_id: replyToId },
         true,
       );
-
-      console.log("📤 Server response:", data);
 
       if (data && (data.id || data.ID) && !data.error) {
         const serverId = data.id || data.ID;
@@ -407,19 +447,29 @@ const MessagesPage: React.FC = () => {
       {/* Mobile Header */}
       <div className="md:hidden bg-[#1c1c1e] border-b border-gray-800 px-4 py-3 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-white">Messages</h1>
-        {!isConnected && (
-          <span className="text-xs text-yellow-500">Connecting...</span>
-        )}
+        <div className="flex items-center gap-2">
+          {!isConnected ? (
+            <span className="text-xs text-yellow-500">●</span>
+          ) : (
+            <span className="text-xs text-green-500">●</span>
+          )}
+        </div>
       </div>
 
       {/* Desktop Header */}
       <div className="hidden md:flex justify-between items-center mb-4 px-2">
         <h1 className="text-2xl font-bold text-white">Messages</h1>
-        {!isConnected && (
-          <span className="text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded">
-            ⚡ Reconnecting...
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {!isConnected ? (
+            <span className="text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded">
+              ⚡ Reconnecting...
+            </span>
+          ) : (
+            <span className="text-xs text-green-500 bg-green-500/10 px-2 py-1 rounded">
+              🟢 Connected
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden md:grid md:grid-cols-3 md:gap-4">
@@ -463,8 +513,7 @@ const MessagesPage: React.FC = () => {
                         {conv.friend_name}
                       </span>
                       <span className="text-xs text-gray-500 ml-2">
-                        {formatTime(conv.last_message_at)}{" "}
-                        {/* FIXED: was last_message_time */}
+                        {formatTime(conv.last_message_at)}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -512,8 +561,12 @@ const MessagesPage: React.FC = () => {
                     <span className="font-semibold text-white text-base leading-tight">
                       {currentFriendName}
                     </span>
-                    {typingUsers.includes(currentFriendId) && (
-                      <span className="text-xs text-[#007aff]">typing...</span>
+                    {typingUsers.includes(currentFriendId) ? (
+                      <span className="text-xs text-[#007aff] animate-pulse">
+                        typing...
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">Online</span>
                     )}
                   </div>
                 </div>
@@ -666,25 +719,34 @@ const MessagesPage: React.FC = () => {
                   </div>
                 ))}
 
-                {/* Typing Bubble */}
+                {/* TYPING BUBBLE - iMessage Style */}
                 {typingUsers.includes(currentFriendId) && (
-                  <div className="flex justify-start items-end gap-2 mb-2 animate-fade-in">
+                  <div className="flex justify-start items-end gap-2 mb-4 animate-fade-in">
                     <div className="w-8 h-8 rounded-full bg-[#007aff] flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mb-1">
                       {currentFriendName[0].toUpperCase()}
                     </div>
-                    <div className="bg-[#2c2c2e] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1 min-w-[60px] h-[36px]">
+                    <div className="bg-[#2c2c2e] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1 min-w-[60px]">
                       <span
-                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      ></span>
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0ms",
+                          animationDuration: "1.4s",
+                        }}
+                      />
                       <span
-                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{ animationDelay: "0.2s" }}
-                      ></span>
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0.2s",
+                          animationDuration: "1.4s",
+                        }}
+                      />
                       <span
-                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
-                        style={{ animationDelay: "0.4s" }}
-                      ></span>
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0.4s",
+                          animationDuration: "1.4s",
+                        }}
+                      />
                     </div>
                   </div>
                 )}
