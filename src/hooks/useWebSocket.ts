@@ -35,7 +35,21 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isConnectingRef = useRef(false);
+
+  // Get WebSocket URL from environment
+  const getWebSocketUrl = useCallback(() => {
+    // Use environment variable if available
+    const wsUrl = import.meta.env.VITE_WS_URL;
+    
+    if (wsUrl) {
+      return `${wsUrl}/ws?token=${token}`;
+    }
+    
+    // Fallback: construct from current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    return `${protocol}//${host}/ws?token=${token}`;
+  }, [token]);
 
   const startHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
@@ -43,101 +57,73 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
     }
     
     heartbeatIntervalRef.current = setInterval(() => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000);
   }, []);
 
   const connect = useCallback(() => {
-    if (isConnectingRef.current) {
-      console.log('WebSocket: Already connecting, skipping...');
-      return;
-    }
-
     if (!userId || !token) {
       console.log('WebSocket: No userId or token, skipping connection');
       return;
     }
 
-    isConnectingRef.current = true;
-
-    // DEPLOYMENT FIX: Use environment variable or auto-detect protocol
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/ws?token=${encodeURIComponent(token)}`;
-    
-    console.log('WebSocket: Connecting to', wsUrl, 'Protocol:', wsProtocol);
-    
-    try {
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log('✅ WebSocket connected');
-        setIsConnected(true);
-        wsRef.current = ws;
-        isConnectingRef.current = false;
-        startHeartbeat();
-        
-        ws.send(JSON.stringify({
-          type: 'connect',
-          user_id: userId
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: WebSocketMessage = JSON.parse(event.data);
-          
-          if (data.type === 'pong') {
-            return;
-          }
-
-          console.log('📨 WebSocket received:', data);
-          setLastMessage(data);
-        } catch (error) {
-          console.error('WebSocket: Failed to parse message:', error);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log('❌ WebSocket disconnected:', event.code, event.reason);
-        setIsConnected(false);
-        wsRef.current = null;
-        isConnectingRef.current = false;
-
-        if (heartbeatIntervalRef.current) {
-          clearInterval(heartbeatIntervalRef.current);
-          heartbeatIntervalRef.current = null;
-        }
-
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-        }
-
-        // Auto-reconnect after 5 seconds (longer for production)
-        if (userId && token) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            console.log('🔄 WebSocket reconnecting...');
-            connect();
-          }, 5000);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        isConnectingRef.current = false;
-      };
-    } catch (error) {
-      console.error('WebSocket: Failed to create connection:', error);
-      isConnectingRef.current = false;
+    // Close existing connection
+    if (wsRef.current) {
+      wsRef.current.close();
     }
-  }, [userId, token, startHeartbeat]);
+
+    const wsUrl = getWebSocketUrl();
+    console.log('🔌 WebSocket connecting to:', wsUrl);
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket connected');
+      setIsConnected(true);
+      wsRef.current = ws;
+      startHeartbeat();
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data: WebSocketMessage = JSON.parse(event.data);
+        console.log('📨 WebSocket received:', data);
+        
+        if (data.type === 'pong') return;
+        setLastMessage(data);
+      } catch (error) {
+        console.error('WebSocket: Failed to parse message:', error);
+      }
+    };
+
+    ws.onclose = (event) => {
+      console.log('❌ WebSocket disconnected:', event.code, event.reason);
+      setIsConnected(false);
+      wsRef.current = null;
+
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+
+      // Auto-reconnect
+      if (userId && token) {
+        reconnectTimeoutRef.current = setTimeout(() => {
+          console.log('🔄 WebSocket reconnecting...');
+          connect();
+        }, 3000);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+  }, [userId, token, getWebSocketUrl, startHeartbeat]);
 
   useEffect(() => {
-    if (userId && token) {
-      connect();
-    }
+    connect();
 
     return () => {
       if (reconnectTimeoutRef.current) {
@@ -150,23 +136,16 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
         wsRef.current.close();
       }
     };
-  }, [connect, userId, token]);
+  }, [connect]);
 
-  const sendMessage = useCallback(
-    (message: WebSocketMessage) => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(message));
-        console.log('📤 WebSocket sent:', message);
-      } else {
-        console.warn('WebSocket not connected, message not sent:', message);
-      }
-    },
-    []
-  );
+  const sendMessage = useCallback((message: WebSocketMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+      console.log('📤 WebSocket sent:', message);
+    } else {
+      console.warn('WebSocket not connected, message not sent:', message);
+    }
+  }, []);
 
-  return { 
-    isConnected, 
-    lastMessage, 
-    sendMessage
-  };
+  return { isConnected, lastMessage, sendMessage };
 };
