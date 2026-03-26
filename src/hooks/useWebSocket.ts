@@ -50,7 +50,6 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
   }, []);
 
   const connect = useCallback(() => {
-    // Prevent multiple simultaneous connections
     if (isConnectingRef.current) {
       console.log('WebSocket: Already connecting, skipping...');
       return;
@@ -63,11 +62,12 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
 
     isConnectingRef.current = true;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`;
+    // DEPLOYMENT FIX: Use environment variable or auto-detect protocol
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/ws?token=${encodeURIComponent(token)}`;
     
-    console.log('WebSocket: Connecting to', wsUrl);
+    console.log('WebSocket: Connecting to', wsUrl, 'Protocol:', wsProtocol);
     
     try {
       const ws = new WebSocket(wsUrl);
@@ -115,12 +115,12 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
           clearTimeout(reconnectTimeoutRef.current);
         }
 
-        // Auto-reconnect after 3 seconds
+        // Auto-reconnect after 5 seconds (longer for production)
         if (userId && token) {
           reconnectTimeoutRef.current = setTimeout(() => {
             console.log('🔄 WebSocket reconnecting...');
             connect();
-          }, 3000);
+          }, 5000);
         }
       };
 
@@ -134,7 +134,6 @@ export const useWebSocket = (userId: number | null, token: string | null) => {
     }
   }, [userId, token, startHeartbeat]);
 
-  // Connect when userId or token changes
   useEffect(() => {
     if (userId && token) {
       connect();
