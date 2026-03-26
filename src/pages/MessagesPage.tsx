@@ -40,12 +40,24 @@ const MessagesPage: React.FC = () => {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isActiveRef = useRef(true);
   const currentFriendRef = useRef<number | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const {
     lastMessage,
     sendMessage: sendWSMessage,
     isConnected,
   } = useWebSocket(user?.id ?? null, token);
+
+  // Prevent zoom on iOS when focusing input
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (meta) {
+      meta.setAttribute(
+        "content",
+        "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no",
+      );
+    }
+  }, []);
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -67,19 +79,15 @@ const MessagesPage: React.FC = () => {
   const loadMessages = useCallback(
     async (friendId: number) => {
       try {
-        // Fetch text messages
         const textMessages = await api.get<ExtendedMessage[]>(
           `/api/messages/${friendId}`,
           true,
         );
-
-        // Fetch media messages
         const mediaMessages = await api.get<ExtendedMessage[]>(
           `/api/media/messages/${friendId}`,
           true,
         );
 
-        // Combine and sort by date
         const allMessages = [
           ...(textMessages || []),
           ...(mediaMessages || []),
@@ -90,10 +98,6 @@ const MessagesPage: React.FC = () => {
 
         if (!isActiveRef.current) return;
         setMessages(allMessages);
-
-        console.log(
-          `Loaded ${allMessages.length} messages (${textMessages?.length || 0} text, ${mediaMessages?.length || 0} media)`,
-        );
       } catch (err) {
         console.error("Failed to load messages:", err);
         showError("Failed to load messages");
@@ -102,31 +106,11 @@ const MessagesPage: React.FC = () => {
     [showError],
   );
 
-  // Mark message as read
-  // const markAsRead = useCallback(
-  //   async (messageId: number) => {
-  //     try {
-  //       await api.put(`/api/messages/${messageId}/read`, {}, true);
-  //       sendWSMessage({
-  //         type: "message_read",
-  //         message_id: messageId,
-  //         reader_id: user!.id,
-  //       });
-  //     } catch (error) {
-  //       console.error("Failed to mark as read:", error);
-  //     }
-  //   },
-  //   [user, sendWSMessage],
-  // );
-
   // Handle incoming WebSocket messages
   useEffect(() => {
     if (!lastMessage) return;
     const msg = lastMessage as any;
 
-    console.log("WebSocket message received:", msg);
-
-    // Handle new text message
     if (msg.type === "new_message") {
       if (msg.sender_id !== currentFriendRef.current) {
         loadConversations();
@@ -149,7 +133,6 @@ const MessagesPage: React.FC = () => {
       loadConversations();
     }
 
-    // Handle new media message
     if (msg.type === "new_media" || msg.type === "media_message") {
       if (msg.sender_id !== currentFriendRef.current) {
         loadConversations();
@@ -175,7 +158,6 @@ const MessagesPage: React.FC = () => {
       loadConversations();
     }
 
-    // Handle typing indicator
     if (msg.type === "typing") {
       if (msg.sender_id !== currentFriendRef.current) return;
       setTypingUsers((prev) => [...new Set([...prev, msg.sender_id])]);
@@ -184,7 +166,6 @@ const MessagesPage: React.FC = () => {
       }, 3000);
     }
 
-    // Handle read receipt
     if (msg.type === "message_read") {
       setMessages((prev) =>
         prev.map((m) =>
@@ -195,7 +176,6 @@ const MessagesPage: React.FC = () => {
     }
   }, [lastMessage, user, loadConversations]);
 
-  // Initialize
   useEffect(() => {
     isActiveRef.current = true;
     loadConversations();
@@ -206,7 +186,6 @@ const MessagesPage: React.FC = () => {
     };
   }, [loadConversations]);
 
-  // URL param
   useEffect(() => {
     const friendId = searchParams.get("friend");
     if (friendId && !currentFriendId) {
@@ -214,12 +193,10 @@ const MessagesPage: React.FC = () => {
     }
   }, [searchParams]);
 
-  // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, typingUsers]);
 
-  // Typing indicator handler
   const handleTyping = useCallback(() => {
     if (!isTyping && currentFriendId) {
       setIsTyping(true);
@@ -246,7 +223,6 @@ const MessagesPage: React.FC = () => {
     }, 1000);
   }, [isTyping, currentFriendId, sendWSMessage]);
 
-  // Open chat
   const openChat = useCallback(
     async (friendId: number) => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -267,7 +243,6 @@ const MessagesPage: React.FC = () => {
     [loadMessages],
   );
 
-  // Send message
   const sendMessage = async () => {
     if (!newMessage.trim() && !replyingTo) return;
     if (!currentFriendId) return;
@@ -324,7 +299,6 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  // Handle media upload complete
   const handleMediaUploadComplete = useCallback(() => {
     if (currentFriendId) {
       loadMessages(currentFriendId);
@@ -340,7 +314,19 @@ const MessagesPage: React.FC = () => {
     }
   };
 
-  // Filter conversations
+  // Auto-resize textarea
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewMessage(e.target.value);
+    handleTyping();
+
+    // Auto-resize
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    }
+  };
+
   const filteredConversations = conversations.filter(
     (c) =>
       c.friend_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -352,16 +338,52 @@ const MessagesPage: React.FC = () => {
   );
   const currentFriendName = currentConversation?.friend_name || "User";
 
-  // Format time
   const formatTime = (dateStr: string): string => {
     const date = new Date(dateStr);
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  const formatDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+      return "Today";
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      return "Yesterday";
+    } else {
+      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+    }
+  };
+
+  // Group messages by date
+  const groupedMessages = messages.reduce(
+    (groups, msg) => {
+      const date = new Date(msg.created_at).toDateString();
+      if (!groups[date]) {
+        groups[date] = [];
+      }
+      groups[date].push(msg);
+      return groups;
+    },
+    {} as Record<string, ExtendedMessage[]>,
+  );
+
   return (
-    <div className="max-w-6xl mx-auto p-6 h-[calc(100vh-80px)] flex flex-col">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">💬 Messages</h1>
+    <div className="h-screen bg-black flex flex-col md:max-w-6xl md:mx-auto md:p-4 md:h-[calc(100vh-80px)]">
+      {/* Mobile Header */}
+      <div className="md:hidden bg-[#1c1c1e] border-b border-gray-800 px-4 py-3 flex items-center justify-between">
+        <h1 className="text-lg font-semibold text-white">Messages</h1>
+        {!isConnected && (
+          <span className="text-xs text-yellow-500">Connecting...</span>
+        )}
+      </div>
+
+      {/* Desktop Header */}
+      <div className="hidden md:flex justify-between items-center mb-4 px-2">
+        <h1 className="text-2xl font-bold text-white">Messages</h1>
         {!isConnected && (
           <span className="text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded">
             ⚡ Reconnecting...
@@ -369,250 +391,347 @@ const MessagesPage: React.FC = () => {
         )}
       </div>
 
-      <div className="grid md:grid-cols-3 gap-4 flex-1 min-h-0">
-        {/* SIDEBAR */}
-        <div className="flex flex-col min-h-0">
-          <input
-            placeholder="Search conversations..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full p-2 mb-3 rounded-xl bg-[#111118] border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 text-sm"
-          />
+      <div className="flex flex-1 min-h-0 overflow-hidden md:grid md:grid-cols-3 md:gap-4">
+        {/* SIDEBAR - Conversations List */}
+        <div
+          className={`${currentFriendId ? "hidden md:flex" : "flex"} flex-col bg-[#1c1c1e] md:bg-transparent min-h-0`}
+        >
+          <div className="p-3 md:p-0 md:mb-3">
+            <input
+              placeholder="Search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full p-2.5 rounded-xl bg-[#2c2c2e] md:bg-[#111118] border-0 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#007aff] text-base md:text-sm"
+              style={{ fontSize: "16px" }} // Prevent iOS zoom
+            />
+          </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1">
+          <div className="flex-1 overflow-y-auto">
             {loading ? (
-              <p className="text-gray-400 text-sm p-2">Loading...</p>
+              <div className="flex items-center justify-center p-4">
+                <div className="animate-spin h-5 w-5 border-2 border-[#007aff] border-t-transparent rounded-full"></div>
+              </div>
             ) : filteredConversations.length > 0 ? (
               filteredConversations.map((conv) => (
                 <button
                   key={conv.friend_id}
                   onClick={() => openChat(conv.friend_id)}
-                  className={`w-full text-left p-3 rounded-xl transition ${
+                  className={`w-full text-left p-3 flex items-center gap-3 transition ${
                     currentFriendId === conv.friend_id
-                      ? "bg-indigo-500/10 border border-indigo-500/30"
-                      : "hover:bg-white/5 border border-transparent"
+                      ? "bg-[#007aff]/20 md:bg-[#007aff]/10"
+                      : "hover:bg-white/5"
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                      {conv.friend_name[0].toUpperCase()}
+                  {/* Avatar */}
+                  <div className="w-12 h-12 md:w-10 md:h-10 rounded-full bg-[#007aff] flex items-center justify-center text-white text-lg md:text-base font-medium flex-shrink-0">
+                    {conv.friend_name[0].toUpperCase()}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-center mb-0.5">
+                      <span className="font-medium text-white text-base md:text-sm truncate">
+                        {conv.friend_name}
+                      </span>
+                      <span className="text-xs text-gray-500 ml-2">
+                        {formatTime(conv.last_message_at)}
+                      </span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-center">
-                        <span className="font-medium text-sm truncate">
-                          {conv.friend_name}
-                        </span>
-                        {conv.unread_count > 0 && (
-                          <span className="ml-2 px-1.5 py-0.5 bg-indigo-600 rounded-full text-xs text-white flex-shrink-0">
-                            {conv.unread_count}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500 truncate">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm md:text-xs text-gray-400 truncate flex-1">
                         {conv.last_message}
-                      </div>
+                      </span>
+                      {conv.unread_count > 0 && (
+                        <span className="ml-2 px-2 py-0.5 bg-[#007aff] rounded-full text-xs text-white font-medium min-w-[20px] text-center">
+                          {conv.unread_count}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </button>
               ))
             ) : (
-              <p className="text-gray-500 text-sm p-2">No conversations yet</p>
+              <p className="text-gray-500 text-sm p-4 text-center">
+                No conversations
+              </p>
             )}
           </div>
         </div>
 
         {/* CHAT PANEL */}
-        <div className="md:col-span-2 flex flex-col min-h-0 bg-[#16161f] border border-white/10 rounded-xl overflow-hidden">
+        <div
+          className={`${currentFriendId ? "flex" : "hidden md:flex"} flex-col flex-1 md:col-span-2 bg-black md:bg-[#16161f] md:rounded-2xl md:border md:border-white/10 overflow-hidden`}
+        >
           {currentFriendId ? (
             <>
-              {/* HEADER */}
-              <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white text-sm font-bold">
+              {/* Chat Header */}
+              <div className="bg-[#1c1c1e]/95 backdrop-blur-md border-b border-gray-800 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
+                <div className="flex items-center gap-3 flex-1">
+                  <button
+                    onClick={() => setCurrentFriendId(null)}
+                    className="md:hidden text-[#007aff] text-lg font-medium"
+                  >
+                    ← Back
+                  </button>
+                  <div className="w-9 h-9 rounded-full bg-[#007aff] flex items-center justify-center text-white text-sm font-medium">
                     {currentFriendName[0].toUpperCase()}
                   </div>
-                  <span className="font-semibold">{currentFriendName}</span>
-                  {typingUsers.includes(currentFriendId) && (
-                    <span className="text-xs text-indigo-400 ml-2 animate-pulse">
-                      typing...
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-white text-base leading-tight">
+                      {currentFriendName}
                     </span>
-                  )}
+                    <span className="text-xs text-gray-500">Online</span>
+                  </div>
                 </div>
               </div>
 
-              {/* MESSAGES */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {messages.length === 0 && (
-                  <div className="text-center text-gray-500 py-8">
-                    No messages yet. Start a conversation!
-                  </div>
-                )}
-                {messages.map((msg) => {
-                  const isSent = msg.sender_id === user?.id;
+              {/* Messages Area */}
+              <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
+                {messages.length === 0 &&
+                  !typingUsers.includes(currentFriendId) && (
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                      <div className="text-center">
+                        <div className="text-4xl mb-2">💬</div>
+                        <p>No messages yet</p>
+                      </div>
+                    </div>
+                  )}
 
-                  return (
-                    <div key={msg.id} className="group">
-                      {/* Reply preview */}
-                      {msg.is_replying_to && msg.reply_to_message && (
-                        <div
-                          className={`text-xs text-gray-400 mb-1 ${
-                            isSent ? "text-right" : "text-left"
-                          }`}
-                        >
-                          <span className="text-indigo-400">
-                            ↩️ Replying to:
-                          </span>{" "}
-                          {msg.reply_to_message.message.substring(0, 50)}...
-                        </div>
-                      )}
+                {Object.entries(groupedMessages).map(([date, dateMessages]) => (
+                  <div key={date}>
+                    {/* Date Separator */}
+                    <div className="flex justify-center my-4">
+                      <span className="text-xs text-gray-500 bg-[#1c1c1e] px-3 py-1 rounded-full">
+                        {formatDate(dateMessages[0].created_at)}
+                      </span>
+                    </div>
 
-                      <div
-                        className={`flex ${isSent ? "justify-end" : "justify-start"}`}
-                      >
-                        <div className="max-w-[70%]">
-                          {/* Media message */}
-                          {msg.media_type && msg.file_path ? (
-                            <MediaMessage
-                              id={msg.id}
-                              mediaType={msg.media_type}
-                              filePath={msg.file_path}
-                              fileName={msg.file_name || ""}
-                              fileSize={msg.file_size || 0}
-                              isOwn={isSent}
-                              createdAt={msg.created_at}
-                              onDelete={() => {
-                                if (currentFriendId) {
-                                  loadMessages(currentFriendId);
-                                  loadConversations();
-                                }
-                              }}
-                            />
-                          ) : (
-                            /* Text message */
+                    {dateMessages.map((msg, index) => {
+                      const isSent = msg.sender_id === user?.id;
+                      const showAvatar =
+                        !isSent &&
+                        (index === 0 ||
+                          dateMessages[index - 1]?.sender_id !== msg.sender_id);
+
+                      return (
+                        <div key={msg.id} className="mb-1">
+                          {/* Reply Preview (iMessage style) */}
+                          {msg.is_replying_to && msg.reply_to_message && (
                             <div
-                              className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed relative ${
-                                isSent
-                                  ? "bg-indigo-600 text-white rounded-br-sm"
-                                  : "bg-[#2a2a3a] text-gray-100 rounded-bl-sm"
-                              }`}
+                              className={`flex ${isSent ? "justify-end" : "justify-start"} mb-1`}
                             >
-                              {msg.message}
+                              <div
+                                className={`max-w-[70%] text-xs text-gray-400 ${
+                                  isSent ? "text-right mr-2" : "ml-12"
+                                }`}
+                              >
+                                <span className="text-[#007aff]">
+                                  ↩ Replying to{" "}
+                                </span>
+                                <span className="truncate inline-block max-w-[200px]">
+                                  {msg.reply_to_message.message}
+                                </span>
+                              </div>
                             </div>
                           )}
 
-                          {/* Message metadata */}
                           <div
-                            className={`text-xs mt-1 flex items-center gap-2 ${
-                              isSent ? "justify-end" : "justify-start"
-                            }`}
+                            className={`flex ${isSent ? "justify-end" : "justify-start"} items-end gap-2`}
                           >
-                            <span className="text-gray-500">
-                              {formatTime(msg.created_at)}
-                            </span>
-                            {isSent && msg.is_read && (
-                              <span className="text-indigo-400 text-xs flex items-center gap-1">
-                                <span>✓✓</span> Read
-                              </span>
+                            {/* Avatar for received messages */}
+                            {!isSent && showAvatar && (
+                              <div className="w-8 h-8 rounded-full bg-[#007aff] flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mb-1">
+                                {msg.sender_name?.[0]?.toUpperCase() ||
+                                  currentFriendName[0]}
+                              </div>
                             )}
-                            {isSent && !msg.is_read && (
-                              <span className="text-gray-500 text-xs flex items-center gap-1">
-                                <span>✓</span> Sent
-                              </span>
-                            )}
-                          </div>
+                            {!isSent && !showAvatar && <div className="w-8" />}
 
-                          {/* Reply button */}
-                          {!isSent && (
-                            <button
-                              onClick={() => setReplyingTo(msg)}
-                              className="text-xs text-gray-500 hover:text-indigo-400 mt-1 opacity-0 group-hover:opacity-100 transition"
+                            <div
+                              className={`max-w-[75%] md:max-w-[60%] group relative ${
+                                isSent ? "mr-0" : "ml-0"
+                              }`}
                             >
-                              ↩️ Reply
-                            </button>
-                          )}
+                              {/* iMessage Bubble */}
+                              {msg.media_type && msg.file_path ? (
+                                <MediaMessage
+                                  id={msg.id}
+                                  mediaType={msg.media_type}
+                                  filePath={msg.file_path}
+                                  fileName={msg.file_name || ""}
+                                  fileSize={msg.file_size || 0}
+                                  isOwn={isSent}
+                                  createdAt={msg.created_at}
+                                  onDelete={() => {
+                                    if (currentFriendId) {
+                                      loadMessages(currentFriendId);
+                                      loadConversations();
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <div
+                                  className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed relative ${
+                                    isSent
+                                      ? "bg-[#007aff] text-white rounded-br-md"
+                                      : "bg-[#2c2c2e] text-white rounded-bl-md"
+                                  }`}
+                                >
+                                  {msg.message}
+
+                                  {/* Time inside bubble for iMessage look */}
+                                  <span
+                                    className={`text-[10px] ml-2 opacity-60 ${
+                                      isSent ? "text-white" : "text-gray-400"
+                                    }`}
+                                  >
+                                    {formatTime(msg.created_at)}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Read Receipt */}
+                              {isSent && (
+                                <div className="text-right mt-0.5">
+                                  {msg.is_read ? (
+                                    <span className="text-[10px] text-[#007aff]">
+                                      Read
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-500">
+                                      Delivered
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Reply Action (on long press/hover) */}
+                              <button
+                                onClick={() => setReplyingTo(msg)}
+                                className={`absolute -bottom-6 ${isSent ? "right-0" : "left-0"} 
+                                  text-xs text-[#007aff] opacity-0 group-hover:opacity-100 transition
+                                  bg-black/80 px-2 py-1 rounded-full`}
+                              >
+                                Reply
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      );
+                    })}
+                  </div>
+                ))}
+
+                {/* iMessage-style TYPING BUBBLE */}
+                {typingUsers.includes(currentFriendId) && (
+                  <div className="flex justify-start items-end gap-2 mb-2 animate-fade-in">
+                    <div className="w-8 h-8 rounded-full bg-[#007aff] flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mb-1">
+                      {currentFriendName[0].toUpperCase()}
                     </div>
-                  );
-                })}
+                    <div className="bg-[#2c2c2e] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1 min-w-[60px] h-[36px]">
+                      <span
+                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0ms",
+                          animationDuration: "1.4s",
+                        }}
+                      ></span>
+                      <span
+                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0.2s",
+                          animationDuration: "1.4s",
+                        }}
+                      ></span>
+                      <span
+                        className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce"
+                        style={{
+                          animationDelay: "0.4s",
+                          animationDuration: "1.4s",
+                        }}
+                      ></span>
+                    </div>
+                  </div>
+                )}
+
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Reply indicator */}
+              {/* Reply Preview Bar */}
               {replyingTo && (
-                <div className="px-3 py-2 border-t border-white/10 bg-[#1a1a24] flex items-center justify-between">
-                  <div className="text-sm flex-1">
-                    <span className="text-indigo-400">↩️ Replying to:</span>
-                    <span className="text-gray-400 ml-2">
-                      {replyingTo.message.substring(0, 60)}...
+                <div className="bg-[#1c1c1e] border-t border-gray-800 px-4 py-2 flex items-center gap-3">
+                  <div className="flex-1 bg-[#2c2c2e] rounded-lg px-3 py-2">
+                    <span className="text-xs text-[#007aff] block mb-0.5">
+                      Replying to
+                    </span>
+                    <span className="text-sm text-gray-300 truncate block">
+                      {replyingTo.message}
                     </span>
                   </div>
                   <button
                     onClick={() => setReplyingTo(null)}
-                    className="text-gray-500 hover:text-white ml-2 p-1"
+                    className="text-gray-400 hover:text-white p-1"
                   >
                     ✕
                   </button>
                 </div>
               )}
 
-              {/* INPUT */}
-              <div className="p-3 border-t border-white/10">
-                <div className="flex gap-2 items-end">
-                  {/* Media upload button */}
-                  <MediaUpload
-                    receiverId={currentFriendId}
-                    onUploadComplete={handleMediaUploadComplete}
-                    onError={showError}
-                  />
+              {/* Input Area - iMessage Style */}
+              <div className="bg-[#1c1c1e] border-t border-gray-800 px-3 py-2 pb-safe">
+                <div className="flex items-end gap-2 max-w-4xl mx-auto">
+                  {/* Media Upload */}
+                  <div className="pb-2">
+                    <MediaUpload
+                      receiverId={currentFriendId}
+                      onUploadComplete={handleMediaUploadComplete}
+                      onError={showError}
+                    />
+                  </div>
 
-                  <textarea
-                    value={newMessage}
-                    onChange={(e) => {
-                      setNewMessage(e.target.value);
-                      handleTyping();
-                    }}
-                    onKeyDown={handleKeyDown}
-                    rows={1}
-                    className="flex-1 px-3 py-2 rounded-xl bg-[#111118] border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none text-sm"
-                    placeholder="Type a message... (Enter to send)"
-                  />
+                  {/* Text Input */}
+                  <div className="flex-1 bg-[#2c2c2e] rounded-full px-4 py-2 flex items-end max-h-[100px]">
+                    <textarea
+                      ref={textareaRef}
+                      value={newMessage}
+                      onChange={handleTextareaChange}
+                      onKeyDown={handleKeyDown}
+                      rows={1}
+                      className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none resize-none text-[16px] leading-5 py-1 max-h-[80px]"
+                      placeholder="iMessage"
+                      style={{ fontSize: "16px", minHeight: "20px" }} // Prevent iOS zoom
+                    />
+                  </div>
+
+                  {/* Send Button */}
                   <button
                     onClick={sendMessage}
-                    disabled={sending || (!newMessage.trim() && !replyingTo)}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={sending || !newMessage.trim()}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition mb-1 ${
+                      newMessage.trim()
+                        ? "bg-[#007aff] text-white"
+                        : "bg-gray-700 text-gray-500"
+                    }`}
                   >
                     {sending ? (
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                          fill="none"
-                        />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        />
-                      </svg>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      "Send"
+                      <svg
+                        className="w-5 h-5"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                      >
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                      </svg>
                     )}
                   </button>
                 </div>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-center p-8">
+            <div className="hidden md:flex flex-1 items-center justify-center text-center p-8">
               <div>
-                <div className="text-5xl mb-3">💬</div>
-                <p className="text-gray-500">
-                  Select a conversation to start messaging
-                </p>
+                <div className="text-6xl mb-4 text-gray-600">💬</div>
+                <p className="text-gray-500 text-lg">Select a conversation</p>
               </div>
             </div>
           )}

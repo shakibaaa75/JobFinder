@@ -22,13 +22,11 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Check file type
     if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
       onError?.("Please select an image or video file");
       return;
     }
 
-    // Check file size (50MB max)
     if (file.size > 50 * 1024 * 1024) {
       onError?.("File size must be less than 50MB");
       return;
@@ -42,7 +40,6 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
     formData.append("receiver_id", receiverId.toString());
 
     try {
-      // Use XMLHttpRequest to track progress
       const xhr = new XMLHttpRequest();
 
       xhr.upload.addEventListener("progress", (e) => {
@@ -54,12 +51,6 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
 
       xhr.addEventListener("load", () => {
         if (xhr.status === 201 || xhr.status === 200) {
-          // Parse response to verify success
-          try {
-            JSON.parse(xhr.responseText);
-          } catch {
-            // Ignore parse errors
-          }
           onUploadComplete();
           onError?.("Media uploaded successfully!");
         } else {
@@ -97,7 +88,7 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
   };
 
   return (
-    <div className="relative group">
+    <div className="relative">
       <input
         ref={fileInputRef}
         type="file"
@@ -109,14 +100,16 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
       />
       <label
         htmlFor="media-upload"
-        className={`cursor-pointer p-2 hover:bg-gray-700 rounded-lg transition inline-flex items-center gap-2 ${
-          uploading ? "opacity-50 cursor-not-allowed" : ""
+        className={`cursor-pointer p-2 rounded-full transition flex items-center justify-center ${
+          uploading
+            ? "opacity-50 cursor-not-allowed text-[#007aff]"
+            : "text-[#007aff] hover:bg-[#007aff]/10"
         }`}
         title="Upload photo or video"
       >
         {uploading ? (
-          <>
-            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+          <div className="relative">
+            <svg className="w-6 h-6 animate-spin" viewBox="0 0 24 24">
               <circle
                 className="opacity-25"
                 cx="12"
@@ -132,36 +125,28 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               />
             </svg>
-            <span>
-              {uploadProgress > 0 ? `${uploadProgress}%` : "Uploading..."}
-            </span>
-          </>
+            {uploadProgress > 0 && (
+              <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] text-[#007aff]">
+                {uploadProgress}%
+              </span>
+            )}
+          </div>
         ) : (
-          <>
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-              />
-            </svg>
-            <span className="text-sm">Photo/Video</span>
-          </>
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+            />
+          </svg>
         )}
       </label>
-
-      {/* Tooltip on hover */}
-      {!uploading && (
-        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition whitespace-nowrap">
-          Send photo or video
-        </div>
-      )}
     </div>
   );
 };
