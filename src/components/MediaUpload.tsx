@@ -1,6 +1,5 @@
 // src/components/MediaUpload.tsx
 import React, { useRef, useState } from "react";
-import api from "../services/api";
 
 interface MediaUploadProps {
   receiverId: number;
@@ -16,12 +15,6 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  };
 
   const handleFileSelect = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -61,7 +54,12 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
 
       xhr.addEventListener("load", () => {
         if (xhr.status === 201 || xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
+          // Parse response to verify success
+          try {
+            JSON.parse(xhr.responseText);
+          } catch {
+            // Ignore parse errors
+          }
           onUploadComplete();
           onError?.("Media uploaded successfully!");
         } else {
@@ -99,7 +97,7 @@ export const MediaUpload: React.FC<MediaUploadProps> = ({
   };
 
   return (
-    <div className="relative">
+    <div className="relative group">
       <input
         ref={fileInputRef}
         type="file"

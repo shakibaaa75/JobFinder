@@ -29,10 +29,10 @@ export interface WebSocketMessage {
   created_at?: string;
 }
 
-interface WebSocketEvent {
-  type: string;
-  data: any;
-}
+// interface WebSocketEvent {
+//   type: string;
+//   data: any;
+// }
 
 export const useWebSocket = (userId: number | null, token: string | null) => {
   const [isConnected, setIsConnected] = useState(false);
