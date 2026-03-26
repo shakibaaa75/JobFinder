@@ -1,6 +1,6 @@
-// src/pages/MessagesPage.tsx
+// src/pages/MessagesPage.tsx (Enhanced polling version)
 import React, { useState, useEffect, useRef } from "react";
-import { useSearchParams, Link } from "react-router-dom"; // <-- Added Link here
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import api from "../services/api";
@@ -18,24 +18,29 @@ const MessagesPage: React.FC = () => {
   const [sending, setSending] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [typing, setTyping] = useState<boolean>(false);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(
+    null,
+  );
+  const [lastMessageTimestamp, setLastMessageTimestamp] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isActiveRef = useRef<boolean>(true);
 
   useEffect(() => {
     loadConversations();
+
+    // Cleanup on unmount
     return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
     const friendId = searchParams.get("friend");
-    if (friendId) {
-      const parsedId = parseInt(friendId);
-      if (!isNaN(parsedId)) {
-        openChat(parsedId);
-      }
+    if (friendId && !currentFriendId) {
+      openChat(parseInt(friendId));
     }
   }, [searchParams]);
 
@@ -47,67 +52,78 @@ const MessagesPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // ✅ FIX: Proper error handling
   const loadConversations = async (): Promise<void> => {
     try {
-      const results = await api.get<Conversation[]>(
+      const data = await api.get<Conversation[]>(
         "/api/messages/conversations",
         true,
       );
-      setConversations(Array.isArray(results) ? results : []);
-    } catch (err: any) {
-      console.error("Failed to load conversations:", err);
-      showError(err.response?.data?.error || "Failed to load conversations");
+      setConversations(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Failed to load conversations:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ FIX: Proper error handling with silent option
   const loadMessages = async (
     friendId: number,
     silent: boolean = false,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     try {
-      const results = await api.get<Message[]>(
-        `/api/messages/${friendId}`,
-        true,
-      );
-      if (Array.isArray(results)) {
-        setMessages(results.reverse());
-        if (!silent) {
-          loadConversations();
+      const data = await api.get<Message[]>(`/api/messages/${friendId}`, true);
+      if (Array.isArray(data)) {
+        const newMessages = data.reverse();
+
+        // Check if there are new messages
+        if (newMessages.length > 0) {
+          const latestTimestamp = new Date(
+            newMessages[newMessages.length - 1].created_at,
+          ).getTime();
+
+          if (latestTimestamp > lastMessageTimestamp) {
+            setMessages(newMessages);
+            setLastMessageTimestamp(latestTimestamp);
+
+            if (!silent) {
+              loadConversations(); // Refresh conversation list
+            }
+            return true;
+          }
         }
       }
-    } catch (err: any) {
-      if (!silent) {
-        showError(err.response?.data?.error || "Failed to load messages");
-      }
+      return false;
+    } catch (error) {
+      if (!silent) showError("Failed to load messages");
+      return false;
     }
   };
 
   const openChat = async (friendId: number): Promise<void> => {
     setCurrentFriendId(friendId);
+    setLastMessageTimestamp(0);
 
+    // Clear existing poll interval
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
 
     await loadMessages(friendId);
 
-    // Poll for new messages every 3 seconds
-    pollIntervalRef.current = setInterval(() => {
-      loadMessages(friendId, true);
+    // Poll for new messages every 3 seconds (adjust as needed)
+    pollIntervalRef.current = setInterval(async () => {
+      if (currentFriendId === friendId) {
+        await loadMessages(friendId, true);
+      }
     }, 3000);
   };
 
-  // ✅ FIX: Proper error handling for sending messages
   const sendMessage = async (): Promise<void> => {
     if (!newMessage.trim() || !currentFriendId) return;
 
     setSending(true);
     try {
-      await api.post(
+      const data = await api.post(
         "/api/messages",
         {
           receiver_id: currentFriendId,
@@ -116,13 +132,16 @@ const MessagesPage: React.FC = () => {
         true,
       );
 
-      setNewMessage("");
-      await loadMessages(currentFriendId, true);
-      loadConversations();
-      success("Message sent!");
-    } catch (err: any) {
-      console.error("Failed to send message:", err);
-      showError(err.response?.data?.error || "Failed to send message");
+      if (data && !data.error) {
+        setNewMessage("");
+        await loadMessages(currentFriendId, true);
+        loadConversations();
+        success("Message sent!");
+      } else {
+        showError(data?.error || "Failed to send message");
+      }
+    } catch (error) {
+      showError("Failed to send message");
     } finally {
       setSending(false);
     }
@@ -131,17 +150,16 @@ const MessagesPage: React.FC = () => {
   const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNewMessage(e.target.value);
 
-    if (!typing) {
-      setTyping(true);
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
     }
 
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    typingTimeoutRef.current = setTimeout(() => {
-      setTyping(false);
-    }, 1000);
+    setTyping(true);
+    setTypingTimeout(
+      setTimeout(() => {
+        setTyping(false);
+      }, 1000),
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -188,12 +206,12 @@ const MessagesPage: React.FC = () => {
             </h1>
             <p className="text-gray-500">Chat with your friends</p>
           </div>
-          <Link
-            to="/friends"
+          <a
+            href="/friends"
             className="px-4 py-2 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition"
           >
             👥 View Friends
-          </Link>
+          </a>
         </div>
       </div>
 
@@ -269,12 +287,12 @@ const MessagesPage: React.FC = () => {
                 <div className="text-center py-12">
                   <div className="text-4xl mb-3">💬</div>
                   <p className="text-gray-500">No conversations yet</p>
-                  <Link
-                    to="/friends"
+                  <a
+                    href="/friends"
                     className="text-indigo-400 text-sm mt-2 inline-block"
                   >
                     Find Friends →
-                  </Link>
+                  </a>
                 </div>
               )}
             </div>
@@ -286,8 +304,8 @@ const MessagesPage: React.FC = () => {
               <>
                 {/* Chat Header */}
                 <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                  <Link
-                    to={`/user/${currentFriendId}`}
+                  <a
+                    href={`/user/${currentFriendId}`}
                     className="flex items-center gap-3 hover:opacity-80 transition"
                   >
                     <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
@@ -295,11 +313,16 @@ const MessagesPage: React.FC = () => {
                     </div>
                     <div>
                       <div className="font-medium">{currentFriendName}</div>
-                      <div className="text-xs text-green-400">● Online</div>
+                      <div className="text-xs text-green-400">● Active</div>
                     </div>
-                  </Link>
+                  </a>
                   <button
-                    onClick={() => setCurrentFriendId(null)}
+                    onClick={() => {
+                      setCurrentFriendId(null);
+                      if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                      }
+                    }}
                     className="text-gray-500 hover:text-white transition"
                   >
                     ✕
@@ -337,9 +360,6 @@ const MessagesPage: React.FC = () => {
                               className={`text-xs text-gray-500 mt-1 ${isSent ? "text-right" : "text-left"}`}
                             >
                               {timeAgo(msg.created_at)}
-                              {isSent && msg.is_read && (
-                                <span className="ml-2 text-indigo-400">✓✓</span>
-                              )}
                             </div>
                           </div>
                         </div>
