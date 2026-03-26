@@ -14,22 +14,22 @@ const MessagesPage: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentFriendId, setCurrentFriendId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState<string>("");
+  const [newMessage, setNewMessage] = useState("");
 
-  const [loading, setLoading] = useState<boolean>(true);
-  const [sending, setSending] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const [typing, setTyping] = useState<boolean>(false);
+  const [typing, setTyping] = useState(false);
   const [typingTimeout, setTypingTimeout] = useState<ReturnType<
     typeof setTimeout
   > | null>(null);
 
-  const [lastMessageTimestamp, setLastMessageTimestamp] = useState<number>(0);
+  const [lastMessageTimestamp, setLastMessageTimestamp] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isActiveRef = useRef<boolean>(true);
+  const isActiveRef = useRef(true);
   const currentFriendRef = useRef<number | null>(null);
 
   // ================= INIT =================
@@ -56,15 +56,11 @@ const MessagesPage: React.FC = () => {
 
   // ================= AUTO SCROLL =================
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const scrollToBottom = (): void => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
   // ================= LOAD CONVERSATIONS =================
-  const loadConversations = async (): Promise<void> => {
+  const loadConversations = async () => {
     try {
       const data = await api.get<Conversation[]>(
         "/api/messages/conversations",
@@ -73,8 +69,8 @@ const MessagesPage: React.FC = () => {
 
       if (!isActiveRef.current) return;
       setConversations(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Failed to load conversations:", error);
+    } catch (err) {
+      console.error(err);
     } finally {
       if (isActiveRef.current) setLoading(false);
     }
@@ -83,7 +79,7 @@ const MessagesPage: React.FC = () => {
   // ================= LOAD MESSAGES =================
   const loadMessages = async (
     friendId: number,
-    silent: boolean = false,
+    silent = false,
   ): Promise<boolean> => {
     try {
       const data = await api.get<Message[]>(`/api/messages/${friendId}`, true);
@@ -94,13 +90,13 @@ const MessagesPage: React.FC = () => {
         const newMessages = data.reverse();
 
         if (newMessages.length > 0) {
-          const latestTimestamp = new Date(
+          const latest = new Date(
             newMessages[newMessages.length - 1].created_at,
           ).getTime();
 
-          if (latestTimestamp > lastMessageTimestamp) {
+          if (latest > lastMessageTimestamp) {
             setMessages(newMessages);
-            setLastMessageTimestamp(latestTimestamp);
+            setLastMessageTimestamp(latest);
 
             if (!silent) loadConversations();
             return true;
@@ -109,14 +105,14 @@ const MessagesPage: React.FC = () => {
       }
 
       return false;
-    } catch (error) {
+    } catch {
       if (!silent) showError("Failed to load messages");
       return false;
     }
   };
 
   // ================= OPEN CHAT =================
-  const openChat = async (friendId: number): Promise<void> => {
+  const openChat = async (friendId: number) => {
     setCurrentFriendId(friendId);
     currentFriendRef.current = friendId;
     setLastMessageTimestamp(0);
@@ -134,8 +130,8 @@ const MessagesPage: React.FC = () => {
     }, 3000);
   };
 
-  // ================= SEND MESSAGE =================
-  const sendMessage = async (): Promise<void> => {
+  // ================= SEND =================
+  const sendMessage = async () => {
     if (!newMessage.trim() || !currentFriendId) return;
 
     setSending(true);
@@ -156,7 +152,7 @@ const MessagesPage: React.FC = () => {
         loadConversations();
         success("Message sent!");
       } else {
-        showError(data?.error || "Failed to send message");
+        showError("Failed to send message");
       }
     } catch {
       showError("Failed to send message");
@@ -180,8 +176,7 @@ const MessagesPage: React.FC = () => {
     setTypingTimeout(timeout);
   };
 
-  // ================= ENTER SEND =================
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -190,9 +185,9 @@ const MessagesPage: React.FC = () => {
 
   // ================= FILTER =================
   const filteredConversations = conversations.filter(
-    (conv) =>
-      conv.friend_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      conv.last_message.toLowerCase().includes(searchQuery.toLowerCase()),
+    (c) =>
+      c.friend_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.last_message.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const currentConversation = conversations.find(
@@ -219,36 +214,48 @@ const MessagesPage: React.FC = () => {
 
   // ================= UI =================
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
-      <h1 className="text-3xl font-bold mb-6">💬 Messages</h1>
+    <div className="max-w-6xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">💬 Messages</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Sidebar */}
+      <div className="grid md:grid-cols-3 gap-4">
+        {/* SIDEBAR */}
         <div>
           <input
-            type="text"
             placeholder="Search..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full mb-3 p-2 rounded bg-black/20"
+            className="w-full p-2 mb-3 rounded bg-black/20"
           />
 
-          {filteredConversations.map((conv) => (
-            <button
-              key={conv.friend_id}
-              onClick={() => openChat(conv.friend_id)}
-              className="block w-full text-left p-2 border-b"
-            >
-              {conv.friend_name}
-            </button>
-          ))}
+          {loading ? (
+            <p className="text-gray-400">Loading...</p>
+          ) : filteredConversations.length > 0 ? (
+            filteredConversations.map((conv) => (
+              <button
+                key={conv.friend_id}
+                onClick={() => openChat(conv.friend_id)}
+                className="block w-full text-left p-2 border-b hover:bg-white/5"
+              >
+                <div className="font-medium">{conv.friend_name}</div>
+                <div className="text-xs text-gray-400">{conv.last_message}</div>
+              </button>
+            ))
+          ) : (
+            <p className="text-gray-500">No conversations</p>
+          )}
         </div>
 
-        {/* Chat */}
-        <div className="col-span-2 flex flex-col">
+        {/* CHAT */}
+        <div className="md:col-span-2 flex flex-col">
           {currentFriendId ? (
             <>
-              <div className="flex-1 overflow-y-auto space-y-2">
+              {/* HEADER */}
+              <div className="mb-3 font-semibold">
+                Chat with {currentFriendName}
+              </div>
+
+              {/* MESSAGES */}
+              <div className="flex-1 overflow-y-auto space-y-2 mb-3">
                 {messages.map((msg) => {
                   const isSent = msg.sender_id === user?.id;
 
@@ -257,33 +264,45 @@ const MessagesPage: React.FC = () => {
                       key={msg.id}
                       className={isSent ? "text-right" : "text-left"}
                     >
-                      <span className="inline-block bg-indigo-500 p-2 rounded">
-                        {msg.message}
-                      </span>
+                      <div className="inline-block">
+                        <div className="bg-indigo-500 text-white px-3 py-2 rounded">
+                          {msg.message}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          {timeAgo(msg.created_at)}
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className="flex gap-2 mt-2">
+              {/* INPUT */}
+              <div>
                 <textarea
                   value={newMessage}
                   onChange={handleTyping}
                   onKeyDown={handleKeyDown}
-                  className="flex-1 p-2 rounded bg-black/20"
+                  className="w-full p-2 rounded bg-black/20"
+                  placeholder="Type message..."
                 />
+
+                {typing && (
+                  <p className="text-xs text-gray-400 mt-1">Typing...</p>
+                )}
+
                 <button
                   onClick={sendMessage}
                   disabled={sending}
-                  className="px-4 bg-indigo-500 rounded"
+                  className="mt-2 px-4 py-2 bg-indigo-600 rounded"
                 >
-                  Send
+                  {sending ? "Sending..." : "Send"}
                 </button>
               </div>
             </>
           ) : (
-            <p>Select a chat</p>
+            <p>Select a conversation</p>
           )}
         </div>
       </div>
